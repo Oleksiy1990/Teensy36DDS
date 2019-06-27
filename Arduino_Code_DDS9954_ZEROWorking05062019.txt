@@ -1,0 +1,314 @@
+/*
+AD9954 Example Code
+By: 
+Company:
+Date: 5-15-2019
+
+Uses the AD9954 library to control the DDS board support the AD9954.
+Only a few basic functions are implemented.
+Single tone mode
+Lineair sweep mode.
+
+Open serial monitor at 115200 baud to activate system.
+
+Hardware Connections (DDS-(AD9954)  to Arduino Genui ZERO).
+VCC			=	 5V
+GND			=	 GND
+ssPin		=	10 (ARDUINO ZERO SS pin 4, 10, SSpin)
+resetPin	=	 5
+updatePin	=	 6
+ps0			=	 7
+ps1			=	 8
+osk			=	 9
+pwrContr	=	10	(Active low)
+
+IOSYS		=	GND	(Active high).
+
+MISO		=	(pin1 SPI bus).
+MOSI		=	(pin4 SPI bus).
+SCK			=	(pin3 SPI bus).
+
+DDS output DC level 1,8Volt DC RF output -10dBm.
+
+
+DDS.reset()						=	DDS hardware reset.
+DDS.setPower(x)					=	Hardware pin (pwr), Function to witch ON and OFF the DDS9954  (1) = DDS-ON , (0) = DDS-OFF Default = OFF
+DDS.initialize(xx)				=	initialize DDS with 400 MHz clock and set register (CFR10x00  bit <25> = (1) = OSK enable.
+DDS.setASF(100)					=	Set the output power value (  0 .. 100%), set register(ASF 0x02)  <0 .. 13> = (value).
+DDS.setChargepump				=	set DDS charge pump to 0 = 75uA, 1 = 100uA, 2 = 125uA, 3 = 150uA	set register (CFR2 0x01)  bits <0, 1> = (value).
+DDS.initialize(20000000, 20)	+	initialize DDS with 400 MHz clock, set register (CFR2 0x01) bit <2> = VCO range & bits <3 .. 7 > = (value) = REFCLK multiplier.
+
+*/
+
+
+
+#include <arduino.h>
+#include <SPI.h>
+#include "AD9954.h"
+
+//AD9954 DDS(ssPin, resetPin, updatePin, ps0, ps1, osk, pwrContr, bool externalUpdate);
+AD9954 DDS(10, 5, 6, 7, 8, 9, 11, false);
+
+
+String command1;
+char informationIn[32]; // We hard-code here that we can only receive up to 32 bytes of information
+bool handshakeState = false;
+char incomingChar;
+unsigned long timeStart;
+unsigned long timeNow;
+unsigned long timeoutms = 3000;
+String inString = "";
+float inStringFloat;
+
+bool getHandshake();
+void handleSerial(bool handshakeState);
+
+void setup() {
+	// put your setup code here, to run once:
+	delay(1000);
+	
+	Serial.begin(115200);
+	//Serial.begin(115200);
+	while (!Serial);
+	delay(1000);
+	
+	Serial.println("START");  Serial.println("");
+	SPI.begin();
+	SPI.setClockDivider(SPI_CLOCK_DIV2);	// Set the SPI CLK frequency <<= 25Mhz
+	SPI.setDataMode(SPI_MODE0);
+	
+	DDS.setPower(1);	//(1) = DDS-ON , (0) = DDS-OFF Startup Default DDS = OFF
+	delay(100);// let things get set up...
+	
+	DDS.reset();
+	delay(100); // Give some time to let things get set up...
+	
+	digitalWrite(10, HIGH);  //Fix LOGIC analyzer Slave Select time out error.
+
+	DDS.initialize(400000000);	//initialize DDS
+	
+	DDS.setChargepump(1);	//0 = 75uA, 1 = 100uA, 2 = 125uA, 3 = 150uA
+	DDS.initialize(20000000, 20);	// REFCLK (20Mhz) and the REFCLK multiplier (4 .. 20).
+	
+	DDS.setASF(100);	// Value between 0 .. 100
+	
+	// Test single tone mode.
+	if (test_St) {
+		
+		Serial.println("set DDS frequency to  xxMhz");
+		
+		//DDS.setFreq(65000000); // set DDS to 65 MHz
+		//DDS.setFreq(70000000); // set DDS to 70 MHz
+		//DDS.setFreq(75000000); // set DDS to 75 MHz
+		DDS.setFreq(80000000); // set DDS to 80 MHz
+		//DDS.setFreq(85000000); // set DDS to 85 MHz
+		//DDS.setFreq(90000000); // set DDS to 90 MHz
+		//DDS.setFreq(95000000); // set DDS to 95 MHz
+		//DDS.setFreq(100000000); // set DDS to 100 MHz
+		//DDS.setFreq(105000000); // set DDS to 105 MHz
+		//DDS.setFreq(110000000); // set DDS to 110 MHz
+		//DDS.setFreq(115000000); // set DDS to 115 MHz
+		//DDS.setFreq(120000000); // set DDS to 120 MHz
+	}
+
+	/*
+	Linear sweep mode
+	You can also do a bi-directional linear sweep, using `DDS.linearSweep()`. The direction of the ramp is controlled by
+	the `PS0` pin, so `PS0 HIGH` will cause it to do a positive ramp (limited by a final frequency), and `PS0 LOW` will make it
+	ramp down (limited by a lower-bound frequency). Eg,
+	// Function linearSweep -- places DDS in linear sweep mode.
+	//      Behavior is determined by two frequency tuning words, freq0 and freq1 (freq0 < freq1).
+	//      The PS0 pin HIGH will ramp towards freq1, PS0 LOW will ramp towards freq0.
+	//      The rate of the ramp is dictated by pos/negDF (positive/negative DeltaFreq), and pos/negRR (positive/negative RampRate).
+	//
+	//      freq0: lower frequency bound (Hz)
+	//      freq1: upper frequency bound (Hz)
+	//      posDF: delta frequency for positive ramp (Hz)
+	//      negDF: delta frequency for negative ramp (Hz)
+	//      posRR: number between 0 and 255, indicating number of SYNC_CLK cycles spent at each
+	//              frequency value in the ramp. SYNC_CLK operates at 1/4 of the SYSCLK clock value. Typically SYNC_CLK = 100MHz.
+	//              Thus, the true "ramp rate" is, eg, posDF/(posRR*10 ns)
+	//      negRR: same as above, but for negative ramp.
+	//
+	//      As a general rule, round up (not down) in calculating the delta frequency steps.
+	//
+	//      AD9954::linearSweep(freq0, freq1, posDF, posRR, negDF, negRR);
+
+	*/
+	
+	// Test linear sweep mode
+	if (test_Ls) {
+		
+		//Serial.println("set DDS to  linear sweep mode");
+		
+		//DDS.linearSweep(60000000, 100000000, 1, 1, 1, 1);
+		//DDS.linearSweep(70000000, 90000000, 5, 60, 5, 5);  //  DELTA up 5Hz slope * 50 clockcycles * 10uSec/cycl, DELTA down 5Hz slope * 5 clockcycles * 10uSec/cycl
+	}
+}
+
+void loop() {
+	if (test) {
+		delay(10000);
+		
+		DDS.setFreq(65000000); // set DDS to 65 MHz
+		if (debug1) {
+			Serial.println("set DDS to 65 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(70000000); // set DDS to 70 MHz
+		if (debug1) {
+			Serial.println("set DDS to 70 MHz");
+		}
+		delay(10000);
+		DDS.setFreq(75000000); // set DDS to 75 MHz
+		if (debug1) {
+			Serial.println("set DDS to 75 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(80000000); // set DDS to 80 MHz
+		if (debug1) {
+			Serial.println("set DDS to 80 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(85000000); // set DDS to 85 MHz
+		if (debug1) {
+			Serial.println("set DDS to 85 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(90000000); // set DDS to 90 MHz
+		if (debug1) {
+			Serial.println("set DDS to 90 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(95000000); // set DDS to 95 MHz
+		if (debug1) {
+			Serial.println("set DDS to 95 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(100000000); // set DDS to 100 MHz
+		if (debug1) {
+			Serial.println("set DDS to 100 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(105000000); // set DDS to 105 MHz
+		if (debug) {
+			Serial.println("set DDS to 105 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(110000000); // set DDS to 110 MHz
+		if (debug1) {
+			Serial.println("set DDS to 110 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(115000000); // set DDS to 115 MHz
+		if (debug1) {
+			Serial.println("set DDS to 115 MHz");
+		}
+		delay(10000);
+		
+		DDS.setFreq(120000000); // set DDS to 120 MHz
+		if (debug1) {
+			Serial.println("set DDS to 120 MHz");
+		}
+	}
+	// Test linear sweep mode
+	if (test_Ls) {
+		//delay (5000); // freq sweep up time
+		//digitalWrite(7, LOW);
+		
+		//delay(500); // freq sweep down time
+		//digitalWrite(7, HIGH);
+		DDS.setFreq(80000000);
+		delay(1000);
+		DDS.setASF(100);
+		delay(1000);
+		DDS.setASF(20);
+		delay(1000);
+	}
+	//DDS.setFreq(80000000);
+	handshakeState = getHandshake();
+	handleSerial(&handshakeState);
+	handshakeState = false;
+//	while (Serial.available() > 0) {
+//		command1 = Serial.readStringUntil('\n');
+//		Serial.println(command1);
+//
+//	}
+	
+}
+
+bool getHandshake(){
+	if (Serial.available() > 0 && handshakeState == false) {
+		incomingChar = Serial.read();
+		if (incomingChar == 'h') {
+			Serial.print('y');
+			return true;
+		}
+		else {
+			while (Serial.read() >= 0);
+			Serial.println("Get handshake activated but not getting handshake command!");
+			return false;
+		}
+	}	
+
+}
+
+void handleSerial(bool *handshakeState) {
+	timeStart = millis();
+	timeNow = millis();
+	while (*handshakeState && (timeNow-timeStart) < timeoutms) {
+		//delay(1000); // This is a timeout
+		while (Serial.available() > 0) { 
+			incomingChar = Serial.read();
+			switch (incomingChar) {
+				case 'a':
+					Serial.print('c');
+					DDS.setFreq(80000000);
+					*handshakeState = false;
+					break;
+				case 'b':
+					Serial.print('d');
+					DDS.setFreq(81000000);
+					*handshakeState = false;
+					break;
+				case 'f':
+					Serial.println("float!");
+					while (Serial.available() > 0) {
+					incomingChar = Serial.read();
+					inString += incomingChar;
+					}
+					*handshakeState = false;			
+					break;		
+				default:
+					Serial.println("Wrong frequency requested");
+					*handshakeState = false;
+			}
+		}
+
+		if (inString.length() > 0) {
+			inStringFloat = inString.toFloat();
+			Serial.println(inStringFloat);
+			inString = "";	
+		}
+		delay(5); // just to let it cool down a bit :)
+		timeNow = millis();
+	}
+	if (timeNow - timeStart > timeoutms) {
+		Serial.println("Timeout after handshake, exiting");
+		*handshakeState = false;
+	}	
+}
+	//else {
+	//Serial.print('n');
+	//}
+	
+
