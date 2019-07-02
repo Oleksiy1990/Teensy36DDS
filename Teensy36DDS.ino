@@ -99,6 +99,7 @@ const byte pwrContrPin = 28;
 const unsigned long SPIclockspeed = 1000000;
 
 AD9954 DDS(ssPin, resetPin, updatePin, ps0Pin, ps1Pin, oskPin, pwrContrPin, true/*externalUpdate*/);
+IntervalTimer SWramp_timer;
 //AD9954 DDS(10, 24, 5, 25, 26, 27, 28, true);
 const unsigned long lower_freq_lim = 1000000;
 const unsigned long upper_freq_lim = 160000000;
@@ -128,8 +129,8 @@ unsigned long max_time_interrupts = 10000; // let's set it for 10 s for now
 
 
 volatile bool interruptTriggered = false;
-volatile byte interruptCount = 0;
-
+volatile unsigned int interruptCount = 0; // this counts the number of interrupts in any particular sequence
+volatile unsigned int IntervalTimerCounter = 0; // This is how many times the interval timer sent a tick
 
 String inStringFreq = ""; // this will hold the transmitted value for frequency (in Hz)
 String inStringPower = ""; // this will hold the transmitted value for power (scale 0-100)
@@ -137,7 +138,8 @@ String inStringStepsSequence = ""; // This will hold the total number of steps i
 float inStringFreqFloat; // this and the next two variable will hold the previous three variables, but converted to floats and an integer respectively
 float inStringPowerFloat;
 int num_steps_total_sequence; // how many steps the total sequence will last (this must be the number of triggers)
-const int max_possible_sequence_steps = 50; // the max possible steps for any sequence, this will be the max memory chunk for data
+const int max_possible_sequence_steps = 20; // the max possible steps for any sequence, this will be the max memory chunk for data
+unsigned int num_steps_in_ramp[max_possible_sequence_steps]; // this will hold the number of steps in each software ramp
 
 
 const float freqDefault = 80000000; // default frequency
@@ -167,45 +169,45 @@ bool software_power_rampsIn[max_possible_sequence_steps];
 
 
 bool getHandshake();
-void handleSerial(bool handshakeState);
-bool processSequence(int numSteps);
+void handleSerial(bool *handshakeState);
+bool processSequence(int numSteps); // numSteps defines the number of active steps in the sequence, so the number of triggers actually
 float receiveNumericalData();
 void doSequenceOutput(int numSteps);
+bool generateRampArrays(SW_ramp * my_sw_ramp, float * ramp_array, unsigned int * num_steps_this_ramp);
+void process_SW_ramps(int numSteps);
+void output_SW_Freq_ramp();
+void output_SW_Power_ramp();
 void myISR();
 
 
 void setup() {
-	//AD9954 DDS(ssPin, resetPin, updatePin, ps0Pin, ps1Pin, oskPin, pwrContrPin, true/*externalUpdate*/);
-	// put your setup code here, to run once:
-	//pinMode(interruptPin,INPUT);
 	//GPIOD_PDDR |= (1<<3);
 
 	//pinMode(8,OUTPUT);
 	//attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, LOW);
-	digitalWrite(ssPin,HIGH);
+	digitalWrite(ssPin,HIGH); // This is to prepare the system for SPI communication later
 	Serial.begin(57600);
-	while (!Serial);
-	delay(100);
-	Serial.println("START");
+	//while (!Serial);
+	delay(500);
+	//Serial.println("START");
 	//Serial.println("");
 	SPI.begin();
 	SPI.beginTransaction(SPISettings(SPIclockspeed, MSBFIRST, SPI_MODE0));
-	//SPI.setClockDivider(SPI_CLOCK_DIV2);	// Set the SPI CLK frequency <<= 25Mhz
-	//SPI.setDataMode(SPI_MODE0);
-
+/*
 	DDS.setPower(1);	//(1) = DDS-ON , (0) = DDS-OFF Startup Default DDS = OFF
 	delay(100);// let things get set up...
 
 	DDS.reset();
 	delay(100); // Give some time to let things get set up...
-
+*/
 	//digitalWrite(10, HIGH);  //Fix LOGIC analyzer Slave Select time out error.
-
+	DDS.reset();
 	DDS.initialize(400000000);	//initialize DDS
 
 	DDS.setChargepump(1);	//0 = 75uA, 1 = 100uA, 2 = 125uA, 3 = 150uA
 	DDS.initialize(20000000, 20);	// REFCLK (20Mhz) and the REFCLK multiplier (4 .. 20).
 	DDS.setPower(1);
+	delay(50);
 	//DDS.setASF(100);	// Value between 0 .. 100
 
 
@@ -252,15 +254,20 @@ void loop() {
 	Serial.println(returnCode);
 	*/
 
-	while (true) {
 		//digitalWrite(triggerPin,HIGH);
 
-// AD9954 DDS(ssPin, resetPin, updatePin, ps0Pin, ps1Pin, oskPin, pwrContrPin, true/*externalUpdate*/);
-
-
-		DDS.setFreq(80000000);
+		//Serial.println("Inside while loop");
+		//DDS.reset();
+		/*
+		DDS.setFreq(5000000);
 		DDS.setASF(100);
 		DDS.update();
+		DDS.setFreq(1500000);
+		DDS.setASF(50);
+		DDS.update();
+		DDS.setASF(0);
+		DDS.update();
+		*/
 /*
 		delay(2000);
 		DDS.setFreq(85000000);
@@ -282,8 +289,7 @@ delay(100);
 		//GPIOD_PDOR &= ~(1<<3);
 		//digitalWrite(ssPin,LOW);
 		//digitalWrite(8,HIGH);
-		delay(1000);
-	}
+
 
 
 
@@ -301,19 +307,19 @@ delay(100);
   digitalWrite(6,LOW);
   Serial.println("Written low");
   */
-/*
+
   interruptCount = 0;
   handshakeState = getHandshake();
 	handleSerial(&handshakeState);
 	handshakeState = false;
 	delay(10);
-*/
+
 }
-/*
+
+// getHandshake() simply establishes the first communication with Teensy
 bool getHandshake(){
 	if (Serial.available() > 0 && handshakeState == false) {
 		incomingChar = Serial.read();
-		//Serial.print(incomingChar);
 		if (incomingChar == 'h') {
 			Serial.print('y');
 			interruptTriggered = false;
@@ -324,21 +330,24 @@ bool getHandshake(){
 			while (Serial.read() >= 0);
 			Serial.print('n'); // only send it after the buffer has been cleared, otherwise information will be lost and there will be annoying bugs
 			return false;
-		}
+			}
 	}
-
+	else {
+		return false;
+	}
 }
 
+
+// This is essentially the main function of the whole program
 void handleSerial(bool *handshakeState) {
 	timeStart = millis(); // this is necessary to set the max time between the handshake and all information
-	// only enter this loop if the handshake state is correct
-	while (*handshakeState) {
+	while (*handshakeState) {// only enter this loop if the handshake state is correct
 		if (Serial.available() > 0) {
 			incomingChar = Serial.read();
 			switch (incomingChar) {
 
 				case 'f': // 'f' -> frequency: single tone operation
-					delay(10);
+					delay(1);
 					//Serial.println("Trying to set frequency");
 					while (Serial.available() > 0) {
 						incomingChar = Serial.read(); // it returns -1 if nothing is available
@@ -359,12 +368,11 @@ void handleSerial(bool *handshakeState) {
 						if (inStringFreqFloat >= lower_freq_lim && inStringFreqFloat <= upper_freq_lim) {
 
 							DDS.setFreq(inStringFreqFloat);
-							//delay(100);
-							//DDS.update();
+							DDS.update();
 							Serial.print('c'); // 'c' stands for "correct"
 						}
 						else { // meaning that the requested frequency is out of range
-							Serial.print('n');
+							Serial.print('f');
 						}
 						inStringFreq = "";
 						inStringFreqFloat = 0;
@@ -378,7 +386,7 @@ void handleSerial(bool *handshakeState) {
 					*handshakeState = false; // make sure to send handshake to false after an operation
 					break;
 				case 'p': // 'p' -> power: change power in this command
-					delay(10);
+					delay(1);
 					while (Serial.available() > 0) {
 						incomingChar = Serial.read();
 							if (isDigit(incomingChar) || incomingChar == '.') {
@@ -395,18 +403,13 @@ void handleSerial(bool *handshakeState) {
 					}
 					if (inStringPower.length() > 0) {
 						inStringPowerFloat = inStringPower.toFloat();
-						//Serial.println(inStringFloat);
 						if (inStringPowerFloat >= lower_power_lim && inStringPowerFloat <= upper_power_lim) {
 							DDS.setASF(inStringPowerFloat);
-							//delay(100);
-							//DDS.update();
+							DDS.update();
 							Serial.print('c');
 						}
-						else {
-							//DDS.setASF(0);
-							//delay(100);
-							//DDS.update();
-							Serial.print('n');
+						else { // meaning that power is out of range
+							Serial.print('p');
 						}
 						inStringPower = "";
 						inStringPowerFloat = 0;
@@ -430,11 +433,11 @@ void handleSerial(bool *handshakeState) {
 					Serial.print('c');
 					break;
 				case 's': // 's' stands for "sequence"
-					delay(10);
+					delay(1);
 					while (Serial.available() > 0) {
 						incomingChar = Serial.read();
 							if (isDigit(incomingChar)) {
-								inStringStepsSequence += incomingChar;
+								inStringStepsSequence += incomingChar; // so first get the number of steps in the sequence
 							}
 							else {
 								while (Serial.read() >= 0);
@@ -449,8 +452,17 @@ void handleSerial(bool *handshakeState) {
 							Serial.print('c');
 							inStringStepsSequence = "";
 							isSequenceGood = processSequence(num_steps_total_sequence); // Make sure that this is correct, maybe let it output a bool
+							process_SW_ramps(num_steps_total_sequence);
 							if (isSequenceGood){
 								doSequenceOutput(num_steps_total_sequence);
+							}
+							else {
+								inStringStepsSequence = "";
+								num_steps_total_sequence = 0;
+								Serial.print('n');
+								*handshakeState = false;
+								Serial.print('n');
+								break;
 							}
 						}
 						else {
@@ -503,21 +515,20 @@ void handleSerial(bool *handshakeState) {
 		}
 	}
 }
-*/
-/*
+
+
 bool processSequence(int numSteps) {
-	float runningData;
-	unsigned int num_SW_ramps = 0;
+	float runningData; // This is the variable into which
 	bool errorCondition = false;
 	doSWrampsExist = false;
-	char status[numBlocksSeqStep];
+	char status[numBlocksSeqStep]; // this is basically what type of commands are in each step (void, simple step, ramp)
 	delay(100); // Apparently this waiting time is really important
 
-	for (byte i = 0; i < numSteps; ++i) {
+	for (byte i = 0; i < numSteps; ++i) { // num steps is in the total sequence, so the number of triggers
 		delay(10);
 		// first we receive the commands, of the form 'fplw', and respond with 'r' if all good
 		for (byte j = 0; j < numBlocksSeqStep; ++j ) {
-			if (Serial.available() > 0) {
+			if (Serial.available() > 0) { // it must be exactly the expected number of characters
 				incomingChar = Serial.read();
 			}
 			else {
@@ -540,9 +551,6 @@ bool processSequence(int numSteps) {
 		else {
 			Serial.print('r'); // stands for "received"
 		}
-		//DDS.setFreq(80000000+i*500000);
-		//DDS.update();
-		//delay(500);
 
 		// Now we start filling the saved data buffers with the results of the commands
 		// Do not send "vvvv"
@@ -563,10 +571,10 @@ bool processSequence(int numSteps) {
 		}
 
 
-		if (status[0] == 'v' && status[2] == 'v' && i == 0) {
+		if (status[0] == 'v' && status[2] == 'v' && i == 0) { // that is, either single freq or freq ramp must not be void
 			errorCondition = true;
 		}
-		if (status[1] == 'v' && status[3] == 'v' && i == 0) {
+		if (status[1] == 'v' && status[3] == 'v' && i == 0) { // either single power or power ramp must not be void
 			errorCondition = true;
 		}
 		if (errorCondition) {
@@ -574,22 +582,21 @@ bool processSequence(int numSteps) {
 			return false;
 		}
 
-
 		if (status[0] == 'v') {
 			sequenceFreqs[i] = 0;
 			sequenceFreqsIn[i] = false;
 		}
-		else if (status[0] = 'f') {
+		else if (status[0] == 'f') {
 			runningData = receiveNumericalData();
 			if (runningData >= lower_freq_lim && runningData <= upper_freq_lim){
 				sequenceFreqs[i] = runningData;
+				sequenceFreqsIn[i] = true;
 			}
 			else {
 				runningData = 0;
 				Serial.print('f');
 				return false;
 			}
-			sequenceFreqsIn[i] = true;
 		}
 		else {
 			errorCondition = true;
@@ -599,7 +606,7 @@ bool processSequence(int numSteps) {
 			sequencePowers[i] = 0;
 			sequencePowersIn[i] = false;
 		}
-		else if (status[1] = 'p') {
+		else if (status[1] == 'p') {
 			runningData = receiveNumericalData();
 			if (runningData >= lower_power_lim && runningData <= upper_power_lim){
 				sequencePowers[i] = runningData;
@@ -618,20 +625,18 @@ bool processSequence(int numSteps) {
 			Serial.print('n');
 			return false;
 		}
-	}
-
 
 	// process and save the frequency ramp
 		if (status[2] == 'v') {
-			software_frequency_ramps[i] = {2,0,0,0,0};
+			software_frequency_ramps[i] = {2,0,0,0,0}; // this initializes it to a wrong value so that a correct value must be written before it can proceed
 			software_frequency_rampsIn[i] = false;
 		}
-		else if (status[2] = 'w') {
+		else if (status[2] == 'w') {
 			doSWrampsExist = true;
 			software_frequency_rampsIn[i] = true;
-			for (unsigned short i = 0; i < 5; i++) { // it's because there are 6 entries in the SW_ramp struct
-				switch (i) {
-					case 0:
+			for (unsigned short q = 0; q < 5; q++) { // it's because there are 5 entries in the SW_ramp struct
+				switch (q) {
+					case 0: // this is type of ramp: 0 -> linear, 1 -> exponential
 						runningData = (unsigned int) receiveNumericalData();
 						if (runningData > 1) {
 							Serial.print('n');
@@ -641,7 +646,7 @@ bool processSequence(int numSteps) {
 							software_frequency_ramps[i].type_ramp = runningData;
 							break;
 						}
-					case 1:
+					case 1: // start value for ramp
 						runningData = receiveNumericalData();
 						if (runningData >= lower_freq_lim && runningData <= upper_freq_lim) {
 							software_frequency_ramps[i].start_ramp = runningData;
@@ -651,7 +656,7 @@ bool processSequence(int numSteps) {
 							Serial.print('f');
 							return false;
 						}
-					case 2:
+					case 2: // stop value for ramp
 						runningData = receiveNumericalData();
 						if (runningData >= lower_freq_lim && runningData <= upper_freq_lim) {
 							software_frequency_ramps[i].stop_ramp = runningData;
@@ -661,7 +666,7 @@ bool processSequence(int numSteps) {
 							Serial.print('f');
 							return false;
 						}
-					case 3:
+					case 3: // time duration of ramp
 						runningData = receiveNumericalData();
 						if (runningData > 0 && runningData <= software_ramp_time_limit) {
 							software_frequency_ramps[i].time_ramp = runningData;
@@ -672,13 +677,15 @@ bool processSequence(int numSteps) {
 							return false;
 						}
 					case 4:
-						runningData = receiveNumericalData();
+						runningData = receiveNumericalData(); // exponential constant, in case ramp is exponential
 						software_frequency_ramps[i].exponential_constant_ramp = runningData;
 						break;
 					default:
 						Serial.print('n');
 						return false;
 				}
+			}
+		}
 		else {
 			errorCondition = true;
 		}
@@ -688,11 +695,11 @@ bool processSequence(int numSteps) {
 			software_power_ramps[i] = {2,0,0,0,0};
 			software_power_rampsIn[i] = false;
 		}
-		else if (status[3] = 'w') {
+		else if (status[3] == 'w') {
 			doSWrampsExist = true;
 			software_power_rampsIn[i] = true;
-			for (unsigned short i = 0; i < 5; i++) { // it's because there are 6 entries in the SW_ramp struct
-				switch (i) {
+			for (unsigned short q = 0; q < 5; q++) { // it's because there are 5 entries in the SW_ramp struct
+				switch (q) {
 					case 0:
 						runningData = (unsigned int) receiveNumericalData();
 						if (runningData > 1) {
@@ -741,6 +748,8 @@ bool processSequence(int numSteps) {
 						Serial.print('n');
 						return false;
 				}
+			}
+		}
 		else {
 			errorCondition = true;
 		}
@@ -752,14 +761,12 @@ bool processSequence(int numSteps) {
 	}
 	return true;
 }
-*/
 
-
-/*
+// this function receives numerical data for the contents of steps and ramps in the sequence
 float receiveNumericalData() {
 	String inString = "";
 	float inStringFloat = 0;
-	delay(20);
+	delay(10);
 
 	while (Serial.available() > 0) {
 	incomingChar = Serial.read();
@@ -770,6 +777,7 @@ float receiveNumericalData() {
 			break;
 		}
 		else {
+			delay(10);
 			while (Serial.read() >= 0);
 			inString = "";
 			inStringFloat = 0;
@@ -789,12 +797,16 @@ float receiveNumericalData() {
 
 }
 
+
+// this function generates the actual data arrays that produce software ramps.
+// in other words, it evaluates the particular linear or exponential function that is given
+// called from process_SW_ramps
 bool generateRampArrays(SW_ramp * my_sw_ramp, float * ramp_array, unsigned int * num_steps_this_ramp) {
 	if (my_sw_ramp->type_ramp == 0) { // this is a linear ramp
 		unsigned int num_steps_arr = (unsigned long) (my_sw_ramp->time_ramp/software_ramp_timestep);
 		*num_steps_this_ramp = num_steps_arr+1;
 		float data_step = (my_sw_ramp->stop_ramp - my_sw_ramp->start_ramp)/(num_steps_arr);
-		for (int i; i < (num_steps_arr + 1); i++) {
+		for (unsigned int i = 0; i < (num_steps_arr + 1); i++) {
 			*(ramp_array + i) = (my_sw_ramp->start_ramp + i*data_step);
 		}
 		return true;
@@ -804,7 +816,7 @@ bool generateRampArrays(SW_ramp * my_sw_ramp, float * ramp_array, unsigned int *
 		unsigned int num_steps_arr = (unsigned long) (my_sw_ramp->time_ramp/software_ramp_timestep);
 		*num_steps_this_ramp = num_steps_arr+1;
 		float prefactor = my_sw_ramp->start_ramp - my_sw_ramp->stop_ramp;
-		for (int i; i < (num_steps_arr + 1); i++) {
+		for (unsigned int i = 0; i < (num_steps_arr + 1); i++) {
 			data_value = prefactor*exp(-(0+i*software_ramp_timestep)/my_sw_ramp->exponential_constant_ramp) + my_sw_ramp->stop_ramp;
 			*(ramp_array + i) = data_value;
 		}
@@ -815,25 +827,33 @@ bool generateRampArrays(SW_ramp * my_sw_ramp, float * ramp_array, unsigned int *
 	}
 }
 
-*/
-/*
+
+
 void process_SW_ramps(int numSteps){
-	bool ramp_generated_well = true;
+	//bool ramp_generated_well = true;
+	float temporary_data_arr[max_time_steps_SW_ramp];
+
 	if (doSWrampsExist) {
 		doSWrampsExist = false; // it has to be reset so that next time it doesn't automatically appear
-		for (int i; i < numSteps; i++) {
+		for (int i = 0; i < numSteps; i++) {
 			if (software_frequency_rampsIn[i]) {
-				generateRampArrays(&software_frequency_ramps[i],&SWrampdata_frequency[i][0]);
+				generateRampArrays(&software_frequency_ramps[i],&temporary_data_arr[0],&num_steps_in_ramp[i]);
+				for (unsigned int q = 0; q < num_steps_in_ramp[i]; q++) {
+					SWrampdata_frequency[i][q] = temporary_data_arr[q];
+				}
 			}
 			if (software_power_rampsIn[i]) {
-				generateRampArrays(&software_power_ramps[i],&SWrampdata_power[i][0]);
+				generateRampArrays(&software_power_ramps[i],&temporary_data_arr[0],&num_steps_in_ramp[i]);
+				for (unsigned int q = 0; q< num_steps_in_ramp[i]; q++) {
+					SWrampdata_power[i][q] = temporary_data_arr[q];
+				}
 			}
 		}
 	}
 }
-*/
 
-/*
+
+
 void doSequenceOutput(int numSteps) {
 	attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, RISING);
 	delay(50);
@@ -864,17 +884,49 @@ void doSequenceOutput(int numSteps) {
 	detachInterrupt(digitalPinToInterrupt(interruptPin));
 }
 
-*/
-/*
+
 void myISR() {
 	DDS.update();
 	interruptTriggered = true;
-	if (software_frequency_ramps[interruptCount]) {
-
+	SWramp_timer.end();
+	if (software_frequency_rampsIn[interruptCount]) {
+		DDS.setFreq(SWrampdata_frequency[interruptCount][0]); // the first data point
+		DDS.update();
+		IntervalTimerCounter = 1;
+		SWramp_timer.begin(output_SW_Freq_ramp,software_ramp_timestep*1000); // it's because it's in microseconds
 	}
+	else if (software_power_rampsIn[interruptCount]) {
+		DDS.setASF(SWrampdata_power[interruptCount][0]); // the first data point
+		DDS.update();
+		IntervalTimerCounter = 1;
+		SWramp_timer.begin(output_SW_Power_ramp,software_ramp_timestep*1000);
+	}
+	else {}
 	interruptCount += 1;
 }
-*/
+
+void output_SW_Freq_ramp() {
+	if (IntervalTimerCounter < num_steps_in_ramp[interruptCount]) {
+		DDS.setFreq(SWrampdata_frequency[interruptCount][IntervalTimerCounter]);
+		DDS.update();
+		IntervalTimerCounter += 1;
+	}
+	else {
+		SWramp_timer.end();
+	}
+}
+
+void output_SW_Power_ramp() {
+	if (IntervalTimerCounter < num_steps_in_ramp[interruptCount]) {
+		DDS.setASF(SWrampdata_power[interruptCount][IntervalTimerCounter]);
+		DDS.update();
+		IntervalTimerCounter += 1;
+	}
+	else {
+		SWramp_timer.end();
+	}
+}
+
 
 /*
 void SysTick_Handler(void) {
