@@ -106,7 +106,7 @@ const unsigned long upper_freq_lim = 160000000;
 const float lower_power_lim = 0;
 const float upper_power_lim = 100;
 const float software_ramp_time_limit = 15000; // 15000 ms = 15 s for now
-const float software_ramp_timestep = 0.2; // 0.2 ms = 200 micros
+const float software_ramp_timestep = 3; // 0.2 ms = 200 micros
 
 
 const byte interruptPin = 2;
@@ -131,6 +131,8 @@ unsigned long max_time_interrupts = 10000; // let's set it for 10 s for now
 volatile bool interruptTriggered = false;
 volatile unsigned int interruptCount = 0; // this counts the number of interrupts in any particular sequence
 volatile unsigned int IntervalTimerCounter = 0; // This is how many times the interval timer sent a tick
+volatile bool isTimerStarted = false; // This is to check if the timer for software ramps has started
+
 
 String inStringFreq = ""; // this will hold the transmitted value for frequency (in Hz)
 String inStringPower = ""; // this will hold the transmitted value for power (scale 0-100)
@@ -183,6 +185,7 @@ void myISR();
 void setup() {
 	//GPIOD_PDDR |= (1<<3);
 
+	SWramp_timer.priority(1);
 	//pinMode(8,OUTPUT);
 	//attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, LOW);
 	digitalWrite(ssPin,HIGH); // This is to prepare the system for SPI communication later
@@ -857,6 +860,7 @@ void process_SW_ramps(int numSteps){
 void doSequenceOutput(int numSteps) {
 	attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, RISING);
 	delay(50);
+	SWramp_timer.begin(fake_timer_function,1000000.);
 	for (byte i = 0; i < numSteps; ++i) {
 		if (sequenceFreqsIn[i]) {
 			DDS.setFreq(sequenceFreqs[i]);
@@ -874,8 +878,40 @@ void doSequenceOutput(int numSteps) {
 				i = numSteps;
 				break;
 			}
-			delay(1);
+			//delay(1);
 			if (interruptTriggered) {
+				//SWramp_timer.end();
+				if (software_frequency_rampsIn[i]) {
+					DDS.setFreq(SWrampdata_frequency[i][0]); // the first data point
+					DDS.update();
+					IntervalTimerCounter = 1;
+					isTimerStarted = SWramp_timer.begin(output_SW_Freq_ramp,software_ramp_timestep/1000); // it's because it's in microseconds
+					if (isTimerStarted) {
+						DDS.setFreq(70000000);
+						DDS.update();
+					}
+				}
+				else if (software_power_rampsIn[i]) {
+					DDS.setASF(SWrampdata_power[i][0]); // the first data point
+					DDS.update();
+					IntervalTimerCounter = 1;
+					for (unsigned int q = 1; q < num_steps_in_ramp[i]; q++) {
+								output_SW_Power_ramp();
+								delay(10);
+					}
+					IntervalTimerCounter = 1;
+					SWramp_timer.begin(output_SW_Power_ramp,software_ramp_timestep/1000);
+					/*
+					if (isTimerStarted) {
+						DDS.setFreq(70000000);
+						DDS.update();
+					}
+					else {
+						DDS.setFreq(73000000);
+						DDS.update();
+					}
+					*/
+				}
 				interruptTriggered = false;
 				break;
 			}
@@ -887,22 +923,8 @@ void doSequenceOutput(int numSteps) {
 
 void myISR() {
 	DDS.update();
-	interruptTriggered = true;
-	SWramp_timer.end();
-	if (software_frequency_rampsIn[interruptCount]) {
-		DDS.setFreq(SWrampdata_frequency[interruptCount][0]); // the first data point
-		DDS.update();
-		IntervalTimerCounter = 1;
-		SWramp_timer.begin(output_SW_Freq_ramp,software_ramp_timestep*1000); // it's because it's in microseconds
-	}
-	else if (software_power_rampsIn[interruptCount]) {
-		DDS.setASF(SWrampdata_power[interruptCount][0]); // the first data point
-		DDS.update();
-		IntervalTimerCounter = 1;
-		SWramp_timer.begin(output_SW_Power_ramp,software_ramp_timestep*1000);
-	}
-	else {}
 	interruptCount += 1;
+	interruptTriggered = true;
 }
 
 void output_SW_Freq_ramp() {
@@ -917,8 +939,9 @@ void output_SW_Freq_ramp() {
 }
 
 void output_SW_Power_ramp() {
-	if (IntervalTimerCounter < num_steps_in_ramp[interruptCount]) {
-		DDS.setASF(SWrampdata_power[interruptCount][IntervalTimerCounter]);
+	if (IntervalTimerCounter < num_steps_in_ramp[interruptCount-1]) {
+		DDS.setFreq(70000000+10000000*(IntervalTimerCounter%2));
+		//DDS.setASF(SWrampdata_power[interruptCount][IntervalTimerCounter]);
 		DDS.update();
 		IntervalTimerCounter += 1;
 	}
@@ -927,6 +950,10 @@ void output_SW_Power_ramp() {
 	}
 }
 
+void fake_timer_function() {
+	DDS.setFreq(50000000);
+	DDS.update();
+}
 
 /*
 void SysTick_Handler(void) {
