@@ -194,17 +194,17 @@ def send_sequence(serial_port):
     else:
         print("Ramp data transmission response is undefined")
         sys.exit(0)
-    command = "2000\n"
+    command = "5000\n"
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'r':
         pass
         print("Ramp timing sent")
     elif incoming == 'n':
-        print("Got n in ramp data transmission")
+        print("Got n in ramp time data transmission")
         sys.exit(0)
     else:
-        print("Ramp data transmission response is undefined")
+        print("Ramp time data transmission response is undefined")
         sys.exit(0)
     command = "0\n"
     serial_port.write(command.encode())
@@ -213,10 +213,10 @@ def send_sequence(serial_port):
         pass
         print("Ramp exponential sent")
     elif incoming == 'n':
-        print("Got n in ramp data transmission")
+        print("Got n in ramp exponential const data transmission")
         sys.exit(0)
     else:
-        print("Ramp data transmission response is undefined")
+        print("Ramp data exponential const response is undefined")
         sys.exit(0)
 
 

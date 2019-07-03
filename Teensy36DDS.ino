@@ -922,11 +922,18 @@ void doSequenceOutput(int numSteps) {
 					//DDS.setASF(SWrampdata_power[i][0]); // the first data point
 					//DDS.update();
 					IntervalTimerCounter = 0;
+					digitalWrite(8,HIGH);
 					//output_SW_Power_ramp();
 					//IntervalTimerCounter = 1;
 					//SWramp_timer.begin(output_SW_Power_ramp,software_ramp_timestep*1000.);
-					isTimerStarted = SWramp_timer.begin(fake_timer_function,software_ramp_min_timestep*1000.);
+					isTimerStarted = SWramp_timer.begin(output_SW_Power_ramp,1000.);
 					// so this does start the timer
+					// NOTE! First trigger comes after the first cycle of the timer, NOT immediately at the beginning
+					// And it looks like it does start the timer function too!!!
+
+					// The ramps work too!!! It just the timer refresh rate is not set up appropriately yet
+
+					/*
 					if (isTimerStarted) {
 						digitalWrite(8,HIGH);
 						delay(500);
@@ -955,7 +962,7 @@ void doSequenceOutput(int numSteps) {
 						digitalWrite(8,LOW);
 						delay(500);
 					}
-
+					*/
 				}
 				interruptTriggered = false;
 				break;
@@ -985,7 +992,7 @@ void output_SW_Freq_ramp() {
 
 void output_SW_Power_ramp() {
 	if (IntervalTimerCounter < num_steps_in_ramp[current_loop_number]) {
-		//DDS.setFreq(70000000+10000000*(IntervalTimerCounter%2));
+		//DDS.setFreq(60000000+5000000*(IntervalTimerCounter%2));
 		DDS.setASF(SWrampdata_power[current_loop_number][IntervalTimerCounter]);
 		DDS.update();
 		IntervalTimerCounter += 1;
@@ -995,19 +1002,22 @@ void output_SW_Power_ramp() {
 	}
 }
 
-void fake_timer_function() {}
-
-void fake_timer_function2() {
-	if (IntervalTimerCounter%2 > 0) {
+void fake_timer_function() {
+	if (IntervalTimerCounter%2 > 0.5) {
 		digitalWrite(8,HIGH);
 	}
 	else {
 		digitalWrite(8,LOW);
 	}
 	IntervalTimerCounter++;
-	if (IntervalTimerCounter>10) {
+	if (IntervalTimerCounter>50) {
 		SWramp_timer.end();
 	}
+
+}
+
+void fake_timer_function2() {
+	digitalWrite(8,LOW);
 }
 
 /*
