@@ -96,21 +96,21 @@ const byte ps0Pin = 25;
 const byte ps1Pin = 26;
 const byte oskPin = 27;
 const byte pwrContrPin = 28;
+const byte interruptPin = 2;
+
 const unsigned long SPIclockspeed = 1000000;
 
 AD9954 DDS(ssPin, resetPin, updatePin, ps0Pin, ps1Pin, oskPin, pwrContrPin, true/*externalUpdate*/);
-IntervalTimer SWramp_timer;
+IntervalTimer SWramp_timer; // The timer to produce schedules interrups that define a software ramp
 //AD9954 DDS(10, 24, 5, 25, 26, 27, 28, true);
 const unsigned long lower_freq_lim = 1000000;
 const unsigned long upper_freq_lim = 160000000;
 const float lower_power_lim = 0;
 const float upper_power_lim = 100;
 const float software_ramp_time_limit = 15000; // 15000 ms = 15 s for now
-const float software_ramp_timestep = 3; // 0.2 ms = 200 micros
-
-
-const byte interruptPin = 2;
-//const byte triggerPin = 12;
+const float software_ramp_min_timestep = 3; // 0.2 ms = 200 micros , given in ms
+const float ramp_time_fraction_from_requested = 0.9; // this is to make sure that the ramp ends before the requested time so
+// that the next trigger does not appear before the ramp is done and the timer is stopped
 
 
 bool handshakeState = false;
@@ -122,7 +122,8 @@ bool isSequenceGood;
 const byte numBlocksSeqStep = 4; // this is how many letters there are in the
 // instruction sequence, like "fplw" or like "fvpv"
 
-
+// This is only to make sure that if there are no interrups coming, at some point it stops waiting for them
+// and comes back to the start of the loop, waiting for handshakes
 unsigned long time_now_interrupts;
 unsigned long start_time_interrupts;
 unsigned long max_time_interrupts = 10000; // let's set it for 10 s for now
@@ -132,7 +133,7 @@ volatile bool interruptTriggered = false;
 volatile unsigned int interruptCount = 0; // this counts the number of interrupts in any particular sequence
 volatile unsigned int IntervalTimerCounter = 0; // This is how many times the interval timer sent a tick
 volatile bool isTimerStarted = false; // This is to check if the timer for software ramps has started
-
+volatile unsigned int current_loop_number; // This is to globally have access to the loop number in the sequence
 
 String inStringFreq = ""; // this will hold the transmitted value for frequency (in Hz)
 String inStringPower = ""; // this will hold the transmitted value for power (scale 0-100)
@@ -143,27 +144,36 @@ int num_steps_total_sequence; // how many steps the total sequence will last (th
 const int max_possible_sequence_steps = 20; // the max possible steps for any sequence, this will be the max memory chunk for data
 unsigned int num_steps_in_ramp[max_possible_sequence_steps]; // this will hold the number of steps in each software ramp
 
+//const float freqDefault = 80000000; // default frequency
+//const float powerDefault = 0; // default powers
 
-const float freqDefault = 80000000; // default frequency
-const float powerDefault = 0; // default powers
-
+// these arrays hold the frequencies and powers to output
+// the booleans hold whether at that particular step output is active or not
 float sequenceFreqs[max_possible_sequence_steps];
 float sequencePowers[max_possible_sequence_steps];
 bool sequenceFreqsIn[max_possible_sequence_steps];
 bool sequencePowersIn[max_possible_sequence_steps];
+
+
+// this is to hold all the data for the ramps
 typedef struct {
 	byte type_ramp; // is it a linear ramp or an exponential ramp
 	float start_ramp;
 	float stop_ramp;
 	float time_ramp;
 	float exponential_constant_ramp;
+	float time_step_ramp;
 } SW_ramp;
 
 bool doSWrampsExist = false;
 const unsigned int max_time_steps_SW_ramp = 1000;
 unsigned int num_time_steps_SW_ramp[max_possible_sequence_steps];
+
+// These two are to actually hold the numerical values to output during ramps
 float SWrampdata_frequency[max_possible_sequence_steps][max_time_steps_SW_ramp];
 float SWrampdata_power[max_possible_sequence_steps][max_time_steps_SW_ramp];
+
+// This is to read in the transmitted data for software ramps (before processing it on Teensy to become the actual output arrays)
 SW_ramp software_frequency_ramps[max_possible_sequence_steps]; // save the software ramps
 bool software_frequency_rampsIn[max_possible_sequence_steps];
 SW_ramp software_power_ramps[max_possible_sequence_steps]; // save the software ramps
@@ -672,7 +682,7 @@ bool processSequence(int numSteps) {
 					case 3: // time duration of ramp
 						runningData = receiveNumericalData();
 						if (runningData > 0 && runningData <= software_ramp_time_limit) {
-							software_frequency_ramps[i].time_ramp = runningData;
+							software_frequency_ramps[i].time_ramp = runningData*ramp_time_fraction_from_requested;
 							break;
 						}
 						else {
@@ -736,7 +746,7 @@ bool processSequence(int numSteps) {
 					case 3:
 						runningData = receiveNumericalData();
 						if (runningData > 0 && runningData <= software_ramp_time_limit) {
-							software_power_ramps[i].time_ramp = runningData;
+							software_power_ramps[i].time_ramp = runningData*ramp_time_fraction_from_requested;
 							break;
 						}
 						else {
@@ -805,8 +815,16 @@ float receiveNumericalData() {
 // in other words, it evaluates the particular linear or exponential function that is given
 // called from process_SW_ramps
 bool generateRampArrays(SW_ramp * my_sw_ramp, float * ramp_array, unsigned int * num_steps_this_ramp) {
+	unsigned int num_steps_arr;
 	if (my_sw_ramp->type_ramp == 0) { // this is a linear ramp
-		unsigned int num_steps_arr = (unsigned long) (my_sw_ramp->time_ramp/software_ramp_timestep);
+		if (my_sw_ramp->time_ramp/(max_time_steps_SW_ramp - 1.) < software_ramp_min_timestep) {
+			my_sw_ramp->time_step_ramp = software_ramp_min_timestep;
+			num_steps_arr = (unsigned int) my_sw_ramp->time_ramp/software_ramp_min_timestep;
+		}
+		else {
+			num_steps_arr = max_time_steps_SW_ramp - 1;
+			my_sw_ramp->time_step_ramp = my_sw_ramp->time_ramp/(max_time_steps_SW_ramp - 1.);
+		}
 		*num_steps_this_ramp = num_steps_arr+1;
 		float data_step = (my_sw_ramp->stop_ramp - my_sw_ramp->start_ramp)/(num_steps_arr);
 		for (unsigned int i = 0; i < (num_steps_arr + 1); i++) {
@@ -816,7 +834,7 @@ bool generateRampArrays(SW_ramp * my_sw_ramp, float * ramp_array, unsigned int *
 	}
 	else if (my_sw_ramp->type_ramp == 1) { // this is an exponential ramp
 		float data_value;
-		unsigned int num_steps_arr = (unsigned long) (my_sw_ramp->time_ramp/software_ramp_timestep);
+		unsigned int num_steps_arr = (unsigned int) (my_sw_ramp->time_ramp/software_ramp_timestep);
 		*num_steps_this_ramp = num_steps_arr+1;
 		float prefactor = my_sw_ramp->start_ramp - my_sw_ramp->stop_ramp;
 		for (unsigned int i = 0; i < (num_steps_arr + 1); i++) {
@@ -845,7 +863,7 @@ void process_SW_ramps(int numSteps){
 					SWrampdata_frequency[i][q] = temporary_data_arr[q];
 				}
 			}
-			if (software_power_rampsIn[i]) {
+			else if (software_power_rampsIn[i]) {
 				generateRampArrays(&software_power_ramps[i],&temporary_data_arr[0],&num_steps_in_ramp[i]);
 				for (unsigned int q = 0; q< num_steps_in_ramp[i]; q++) {
 					SWrampdata_power[i][q] = temporary_data_arr[q];
@@ -860,8 +878,9 @@ void process_SW_ramps(int numSteps){
 void doSequenceOutput(int numSteps) {
 	attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, RISING);
 	delay(50);
-	SWramp_timer.begin(fake_timer_function,1000000.);
+	//SWramp_timer.begin(fake_timer_function,1000000.); // this fake function works, so the timer must be working fine
 	for (byte i = 0; i < numSteps; ++i) {
+		current_loop_number = i;
 		if (sequenceFreqsIn[i]) {
 			DDS.setFreq(sequenceFreqs[i]);
 			//delay(100);
@@ -882,25 +901,19 @@ void doSequenceOutput(int numSteps) {
 			if (interruptTriggered) {
 				//SWramp_timer.end();
 				if (software_frequency_rampsIn[i]) {
-					DDS.setFreq(SWrampdata_frequency[i][0]); // the first data point
-					DDS.update();
-					IntervalTimerCounter = 1;
-					isTimerStarted = SWramp_timer.begin(output_SW_Freq_ramp,software_ramp_timestep/1000); // it's because it's in microseconds
-					if (isTimerStarted) {
-						DDS.setFreq(70000000);
-						DDS.update();
-					}
+					//DDS.setFreq(SWrampdata_frequency[i][0]); // the first data point
+					//DDS.update();
+					IntervalTimerCounter = 0;
+					SWramp_timer.begin(output_SW_Freq_ramp,software_ramp_timestep/1000.); // it's because it's in microseconds
+					//output_SW_Freq_ramp();
 				}
 				else if (software_power_rampsIn[i]) {
-					DDS.setASF(SWrampdata_power[i][0]); // the first data point
-					DDS.update();
-					IntervalTimerCounter = 1;
-					for (unsigned int q = 1; q < num_steps_in_ramp[i]; q++) {
-								output_SW_Power_ramp();
-								delay(10);
-					}
-					IntervalTimerCounter = 1;
-					SWramp_timer.begin(output_SW_Power_ramp,software_ramp_timestep/1000);
+					//DDS.setASF(SWrampdata_power[i][0]); // the first data point
+					//DDS.update();
+					IntervalTimerCounter = 0;
+					output_SW_Power_ramp();
+					//IntervalTimerCounter = 1;
+					//SWramp_timer.begin(output_SW_Power_ramp,software_ramp_timestep/1000.);
 					/*
 					if (isTimerStarted) {
 						DDS.setFreq(70000000);
@@ -928,8 +941,8 @@ void myISR() {
 }
 
 void output_SW_Freq_ramp() {
-	if (IntervalTimerCounter < num_steps_in_ramp[interruptCount]) {
-		DDS.setFreq(SWrampdata_frequency[interruptCount][IntervalTimerCounter]);
+	if (IntervalTimerCounter < num_steps_in_ramp[current_loop_number]) {
+		DDS.setFreq(SWrampdata_frequency[current_loop_number][IntervalTimerCounter]);
 		DDS.update();
 		IntervalTimerCounter += 1;
 	}
@@ -939,9 +952,9 @@ void output_SW_Freq_ramp() {
 }
 
 void output_SW_Power_ramp() {
-	if (IntervalTimerCounter < num_steps_in_ramp[interruptCount-1]) {
-		DDS.setFreq(70000000+10000000*(IntervalTimerCounter%2));
-		//DDS.setASF(SWrampdata_power[interruptCount][IntervalTimerCounter]);
+	if (IntervalTimerCounter < num_steps_in_ramp[current_loop_number]) {
+		//DDS.setFreq(70000000+10000000*(IntervalTimerCounter%2));
+		DDS.setASF(SWrampdata_power[current_loop_number][IntervalTimerCounter]);
 		DDS.update();
 		IntervalTimerCounter += 1;
 	}
