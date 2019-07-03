@@ -111,7 +111,7 @@ const float software_ramp_time_limit = 15000; // 15000 ms = 15 s for now
 const float software_ramp_min_timestep = 0.1; // 0.1 ms = 200 micros , given in ms
 const float ramp_time_fraction_from_requested = 0.9; // this is to make sure that the ramp ends before the requested time so
 // that the next trigger does not appear before the ramp is done and the timer is stopped
-
+// VERY IMPORTANT! Pay attention to this ramp_time_fraction_from_requested, otherwise timing bugs will result!
 
 bool handshakeState = false;
 char incomingChar;
@@ -910,29 +910,26 @@ void doSequenceOutput(int numSteps) {
 			}
 			//delay(1);
 			if (interruptTriggered) {
-				//SWramp_timer.end();
+				//SWramp_timer.end(); // This could possibly be important but for now we don't use it just for faster timing
 				if (software_frequency_rampsIn[i]) {
-					//DDS.setFreq(SWrampdata_frequency[i][0]); // the first data point
-					//DDS.update();
-					IntervalTimerCounter = 0;
-					SWramp_timer.begin(output_SW_Freq_ramp,software_frequency_ramps[i].time_step_ramp); // it's because it's in microseconds
-					//output_SW_Freq_ramp();
+					IntervalTimerCounter = 1;
+					DDS.setFreq(SWrampdata_frequency[current_loop_number][0]); // the first data point
+					DDS.update();
+					SWramp_timer.begin(output_SW_Freq_ramp,software_frequency_ramps[i].time_step_ramp*1000.); // it's because it's in microseconds
 				}
 				else if (software_power_rampsIn[i]) {
-					//DDS.setASF(SWrampdata_power[i][0]); // the first data point
-					//DDS.update();
-					IntervalTimerCounter = 0;
-					digitalWrite(8,HIGH);
-					//output_SW_Power_ramp();
-					//IntervalTimerCounter = 1;
+					IntervalTimerCounter = 1;
+					DDS.setASF(SWrampdata_power[current_loop_number][0]);
+					DDS.update();
+					//digitalWrite(8,HIGH);
 					//SWramp_timer.begin(output_SW_Power_ramp,software_ramp_timestep*1000.);
-					isTimerStarted = SWramp_timer.begin(output_SW_Power_ramp,1000.);
+					isTimerStarted = SWramp_timer.begin(output_SW_Power_ramp,software_power_ramps[i].time_step_ramp*1000.);
 					// so this does start the timer
 					// NOTE! First trigger comes after the first cycle of the timer, NOT immediately at the beginning
 					// And it looks like it does start the timer function too!!!
 
 					// The ramps work too!!! It just the timer refresh rate is not set up appropriately yet
-
+					// The refresh rate from the software_power_ramps structure works as well! 
 					/*
 					if (isTimerStarted) {
 						digitalWrite(8,HIGH);
@@ -992,7 +989,6 @@ void output_SW_Freq_ramp() {
 
 void output_SW_Power_ramp() {
 	if (IntervalTimerCounter < num_steps_in_ramp[current_loop_number]) {
-		//DDS.setFreq(60000000+5000000*(IntervalTimerCounter%2));
 		DDS.setASF(SWrampdata_power[current_loop_number][IntervalTimerCounter]);
 		DDS.update();
 		IntervalTimerCounter += 1;
