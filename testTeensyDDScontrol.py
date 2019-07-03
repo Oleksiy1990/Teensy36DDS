@@ -147,7 +147,7 @@ def send_sequence(serial_port):
         sys.exit(0)
 
     # Third one
-    command = "vvvw"
+    command = "vvwv"
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'r':
@@ -170,7 +170,7 @@ def send_sequence(serial_port):
     else:
         print("Ramp data transmission response is undefined")
         sys.exit(0)
-    command = "100\n"
+    command = "80000000\n"
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'r':
@@ -182,7 +182,7 @@ def send_sequence(serial_port):
     else:
         print("Ramp data transmission response is undefined")
         sys.exit(0)
-    command = "50\n"
+    command = "60000000\n"
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'r':

@@ -190,8 +190,6 @@ void process_SW_ramps(int numSteps);
 void output_SW_Freq_ramp();
 void output_SW_Power_ramp();
 void myISR();
-void fake_timer_function();
-void fake_timer_function2();
 
 
 void setup() {
@@ -327,8 +325,25 @@ delay(100);
 
   interruptCount = 0;
   handshakeState = getHandshake();
+	if (handshakeState) { // in this case the DDS is reset at every handshake
+		DDS.reset();
+		DDS.initialize(400000000);	//initialize DDS
+		DDS.setChargepump(0);	//0 = 75uA, 1 = 100uA, 2 = 125uA, 3 = 150uA
+		DDS.initialize(20000000, 20);	// REFCLK (20Mhz) and the REFCLK multiplier (4 .. 20).
+		DDS.setPower(1);
+		delay(10);
+	}
 	handleSerial(&handshakeState);
 	handshakeState = false;
+
+	// Possibly reset the DDS, if necessary. The problem is that then it refreshes everything
+	/*
+	DDS.reset();
+	DDS.initialize(400000000);	//initialize DDS
+	DDS.setChargepump(1);	//0 = 75uA, 1 = 100uA, 2 = 125uA, 3 = 150uA
+	DDS.initialize(20000000, 20);	// REFCLK (20Mhz) and the REFCLK multiplier (4 .. 20).
+	DDS.setPower(1);
+	*/
 	delay(10);
 
 }
@@ -889,6 +904,7 @@ void process_SW_ramps(int numSteps){
 void doSequenceOutput(int numSteps) {
 	attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, RISING);
 	delay(50);
+	//digitalWrite(8,LOW);
 	//SWramp_timer.begin(fake_timer_function,1000000.); // this fake function works, so the timer must be working fine
 	for (byte i = 0; i < numSteps; ++i) {
 		current_loop_number = i;
@@ -916,50 +932,25 @@ void doSequenceOutput(int numSteps) {
 					DDS.setFreq(SWrampdata_frequency[current_loop_number][0]); // the first data point
 					DDS.update();
 					SWramp_timer.begin(output_SW_Freq_ramp,software_frequency_ramps[i].time_step_ramp*1000.); // it's because it's in microseconds
+					if (current_loop_number == (numSteps - 1)) {
+						delay(software_frequency_ramps[i].time_ramp + 5);
+					}
 				}
 				else if (software_power_rampsIn[i]) {
 					IntervalTimerCounter = 1;
+					//digitalWrite(8,HIGH);
 					DDS.setASF(SWrampdata_power[current_loop_number][0]);
 					DDS.update();
-					//digitalWrite(8,HIGH);
-					//SWramp_timer.begin(output_SW_Power_ramp,software_ramp_timestep*1000.);
-					isTimerStarted = SWramp_timer.begin(output_SW_Power_ramp,software_power_ramps[i].time_step_ramp*1000.);
+					SWramp_timer.begin(output_SW_Power_ramp,software_power_ramps[i].time_step_ramp*1000.);
+					if (current_loop_number == (numSteps - 1)) {
+						delay(software_frequency_ramps[i].time_ramp + 5);
+					}
 					// so this does start the timer
 					// NOTE! First trigger comes after the first cycle of the timer, NOT immediately at the beginning
 					// And it looks like it does start the timer function too!!!
 
 					// The ramps work too!!! It just the timer refresh rate is not set up appropriately yet
-					// The refresh rate from the software_power_ramps structure works as well! 
-					/*
-					if (isTimerStarted) {
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-					}
-					if (!isTimerStarted){
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-					}
-					*/
+					// The refresh rate from the software_power_ramps structure works as well!
 				}
 				interruptTriggered = false;
 				break;
@@ -997,7 +988,7 @@ void output_SW_Power_ramp() {
 		SWramp_timer.end();
 	}
 }
-
+/*
 void fake_timer_function() {
 	if (IntervalTimerCounter%2 > 0.5) {
 		digitalWrite(8,HIGH);
@@ -1015,9 +1006,43 @@ void fake_timer_function() {
 void fake_timer_function2() {
 	digitalWrite(8,LOW);
 }
+*/
+
 
 /*
 void SysTick_Handler(void) {
 
 }
 */
+
+// Some debug code in case it's needed
+					/*
+					if (isTimerStarted) {
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+					}
+					if (!isTimerStarted){
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+					}
+					*/
