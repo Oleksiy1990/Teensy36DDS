@@ -28,6 +28,7 @@ def set_frequency(frequency, serial_port):
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'c':
+        print("Freq set")
         return True
     elif incoming == 'n':
         print("Got an n from Arduino")
@@ -46,6 +47,7 @@ def set_power(power, serial_port):
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'c':
+        print("power set")
         return True
     elif incoming == 'n':
         print("Got an n from Arduino")
@@ -206,7 +208,7 @@ def send_sequence(serial_port):
     else:
         print("Ramp time data transmission response is undefined")
         sys.exit(0)
-    command = "1500\n"
+    command = "200\n"
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'r':
@@ -225,6 +227,10 @@ if sPort.isOpen():
     print(sPort.name+" is open")
 else:
     print("Cannot open "+portArduino)
+
+set_frequency(80000000,sPort)
+set_power(100,sPort)
+sys.exit(0)
 send_sequence(sPort)
 sPort.close()
 sys.exit(0)

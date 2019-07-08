@@ -98,7 +98,7 @@ const byte oskPin = 27;
 const byte pwrContrPin = 28;
 const byte interruptPin = 2;
 
-const unsigned long SPIclockspeed = 1000000;
+const unsigned long SPIclockspeed = 500000;
 
 AD9954 DDS(ssPin, resetPin, updatePin, ps0Pin, ps1Pin, oskPin, pwrContrPin, true/*externalUpdate*/);
 IntervalTimer SWramp_timer; // The timer to produce schedules interrups that define a software ramp
@@ -325,14 +325,18 @@ delay(100);
 
   interruptCount = 0;
   handshakeState = getHandshake();
+
+/*
 	if (handshakeState) { // in this case the DDS is reset at every handshake
 		DDS.reset();
 		DDS.initialize(400000000);	//initialize DDS
-		DDS.setChargepump(0);	//0 = 75uA, 1 = 100uA, 2 = 125uA, 3 = 150uA
+		DDS.setChargepump(1);	//0 = 75uA, 1 = 100uA, 2 = 125uA, 3 = 150uA
 		DDS.initialize(20000000, 20);	// REFCLK (20Mhz) and the REFCLK multiplier (4 .. 20).
 		DDS.setPower(1);
-		delay(10);
+		delay(1000);
 	}
+	*/
+
 	handleSerial(&handshakeState);
 	handshakeState = false;
 
@@ -929,21 +933,23 @@ void doSequenceOutput(int numSteps) {
 				//SWramp_timer.end(); // This could possibly be important but for now we don't use it just for faster timing
 				if (software_frequency_rampsIn[i]) {
 					IntervalTimerCounter = 1;
+					// the first point has to be sent immediately, otherwise it waits before the 1st tick of the timer
 					DDS.setFreq(SWrampdata_frequency[current_loop_number][0]); // the first data point
 					DDS.update();
 					SWramp_timer.begin(output_SW_Freq_ramp,software_frequency_ramps[i].time_step_ramp*1000.); // it's because it's in microseconds
 					if (current_loop_number == (numSteps - 1)) {
-						delay(software_frequency_ramps[i].time_ramp + 5);
+						delay(software_frequency_ramps[i].time_ramp + 5); // if the ramp is the last sequence step, wait until it's done
 					}
 				}
 				else if (software_power_rampsIn[i]) {
 					IntervalTimerCounter = 1;
 					//digitalWrite(8,HIGH);
+					// the first point has to be sent immediately, otherwise it waits before the 1st tick of the timer
 					DDS.setASF(SWrampdata_power[current_loop_number][0]);
 					DDS.update();
 					SWramp_timer.begin(output_SW_Power_ramp,software_power_ramps[i].time_step_ramp*1000.);
 					if (current_loop_number == (numSteps - 1)) {
-						delay(software_frequency_ramps[i].time_ramp + 5);
+						delay(software_frequency_ramps[i].time_ramp + 5); // if the ramp is the last step, wait until it's done
 					}
 					// so this does start the timer
 					// NOTE! First trigger comes after the first cycle of the timer, NOT immediately at the beginning
