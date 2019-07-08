@@ -79,7 +79,7 @@ class DDScomm:
         return np.array(value_str,dtype="float")
 
 
-    def get_simple_steps(self,ao_channel):
+    def get_simple_steps(self,ao_channel,ramps_numbers):
         """
         start with a list of all lines from the file, where the commented out steps have been removed
         find simple changes in the given ao value and return them together with their row number in the lines_split list
@@ -88,15 +88,16 @@ class DDScomm:
         column_ao = 2*(ao_channel+1)
         vals_str = [lines_input[n][column_ao] for n in range(len(lines_input))]
         # This line above simply takes the column of values that corresponds to
-        # the anaself.log output of interest
-
+        # the analog output of interest
         steps_positions = [0]
         steps_vals = [vals_str[0]]
         for q in range(1,len(vals_str)):
-            if vals_str[q] != vals_str[q-1]: # we just check if the input changed
+            if (vals_str[q] != vals_str[q-1]) or ((q-1) in ramps_numbers):
+                # we just check if the input changed
                 # notice that we compare strings in order to not get the problem of comparing floats
                 # and string comparison should work perfectly well because we are starting
                 # from a text file
+                # also, if there was a ramp before, the next one should for sure be a trigger and a step
                 steps_positions.append(q)
                 steps_vals.append(vals_str[q])
             else:
@@ -126,13 +127,13 @@ class DDScomm:
 
     def assemble_sequence(self,ao_channel):
         """
-        This assembles the sequence for a single a0_channel
-        the steps list just runs till the max sequence step, the ramp data
-        contains the data, and the type_list controls everything, because each entry can be
+        This assembles the sequence to be sent to the DDS.
+        The position in the array determines the time step along the original sequence
+        The fact whether anything happens in that step is controlled by
         "simple", "ramp", or "void"
         """
-        (simple_step_num, step_data) = self.get_simple_steps(ao_channel)
         (ramps_step_num, ramp_data) = self.get_ramps(ao_channel)
+        (simple_step_num, step_data) = self.get_simple_steps(ao_channel,ramps_step_num)
         #print(simple_step_num)
         #print(ramps_step_num)
         #print(len(simple_step_num))
@@ -203,7 +204,7 @@ class DDScomm:
         self._my_sPort.write(command.encode("ascii"))
         incoming_msg = self._my_sPort.read().decode("ascii")
         if incoming_msg == 'c':
-            print "Frequency set to {:.03f}".format(self._my_freq_toset/1000000.) + " MHz on port {:s}".format(self.my_com)
+            print "Frequency set to {:.04f}".format(self._my_freq_toset/1000000.) + " MHz on port {:s}".format(self.my_com)
             return True
         elif incoming_msg == 'n':
             print "Got an n from Arduino in set_frequency"
@@ -228,7 +229,7 @@ class DDScomm:
         self._my_sPort.write(command.encode("ascii"))
         incoming_msg = self._my_sPort.read().decode("ascii")
         if incoming_msg == 'c':
-            print "Power set to {:03f}".format(self._my_power_toset) + " percent on {:s}".format(self.my_com)
+            print "Power set to {:.04f}".format(self._my_power_toset) + " percent on {:s}".format(self.my_com)
             return True
         elif incoming_msg == 'n':
             print "Got an n from Arduino in set_power"
@@ -283,7 +284,7 @@ class DDScomm:
             return False
 
         # first we tell how many sequence steps there are
-        command = 's' + "{:d}".format(num_sequence_steps)
+        command = "s" + "{:d}".format(num_sequence_steps)
         print "steps "+ command
         self._my_sPort.write(command.encode("ascii"))
         incoming_msg = self._my_sPort.read().decode("ascii")
@@ -355,11 +356,17 @@ class DDScomm:
 
             possible_instruction_statements = ["fpvv", "fvvv", "vpvv", "fvvw", "vpwv", "vvwv", "vvvw"]
             if instruction_statement in possible_instruction_statements:
-                print instruction_statement
+                print instruction_statement # This is only for debugging, this has to be deleted
             else:
                 print "Invalid instruction statement "+instruction_statement
                 return False
 
+            if (data_statement_freq is not None) and (data_statement_ramp_freq is not None):
+                print "Trying to send frequency and ramp frequency. Undefined. Exiting"
+                return False
+            if (data_statement_power is not None) and (data_statement_ramp_power is not None):
+                print "Trying to send power and ramp power. Undefined. Exiting"
+                return False
 
             # first we will send the command to the Arduino, so what type of data is coming
             self._my_sPort.write(instruction_statement.encode("ascii"))
@@ -407,8 +414,8 @@ class DDScomm:
                     return False
 
             if data_statement_ramp_freq is not None:
-                for idx in range(len(data_statement_ramp_freq)):
-                    self._my_sPort.write(data_statement_ramp_freq[idx].encode("ascii"))
+                for q in range(len(data_statement_ramp_freq)):
+                    self._my_sPort.write(data_statement_ramp_freq[q].encode("ascii"))
                     incoming_msg = self._my_sPort.read().decode("ascii")
                     if incoming_msg == 'r':
                         #print "data_statement_power sent successfully"
@@ -421,8 +428,8 @@ class DDScomm:
                         return False
 
             if data_statement_ramp_power is not None:
-                for idx in range(len(data_statement_ramp_power)):
-                    self._my_sPort.write(data_statement_ramp_power[idx].encode("ascii"))
+                for q in range(len(data_statement_ramp_power)):
+                    self._my_sPort.write(data_statement_ramp_power[q].encode("ascii"))
                     incoming_msg = self._my_sPort.read().decode("ascii")
                     if incoming_msg == 'r':
                         #print "data_statement_power sent successfully"
