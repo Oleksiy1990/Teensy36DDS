@@ -98,12 +98,10 @@ class DDScomm:
                 # and string comparison should work perfectly well because we are starting
                 # from a text file
                 # also, if there was a ramp before, the next one should for sure be a trigger and a step
+                if q in ramps_numbers: # This is to make sure that a ramp is NOT also double-counted as a simple step
+                    continue
                 steps_positions.append(q)
                 steps_vals.append(vals_str[q])
-            else:
-                pass
-                #steps_vals.append(0)
-                #steps_vals.append(0)
         return (np.array(steps_positions,dtype = "int"), np.array(steps_vals,dtype = "float"))
 
     def get_ramps(self,ao_channel):
