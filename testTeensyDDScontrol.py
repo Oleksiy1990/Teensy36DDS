@@ -4,7 +4,7 @@ import sys
 import time
 
 
-portArduino = "COM9"
+portArduino = "COM10"
 baud = 57600
 
 def do_handshake(serial_port):
@@ -74,7 +74,7 @@ def send_sequence(serial_port):
         sys.exit(0)
 
     # First one
-    command = "fpvv"
+    command = "fpvv" # send 79.5 MHz at 90.3%
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'r':
@@ -110,46 +110,8 @@ def send_sequence(serial_port):
         print("Error in send_sequence 3")
         sys.exit(0)
 
-    # Second one
-    command = "fpvv"
-    serial_port.write(command.encode())
-    incoming = serial_port.read().decode()
-    if incoming == 'r':
-        print("Sequence 1 command fpv correct")
-    elif incoming == 'n':
-        print("Received n from sequence 1")
-        sys.exit(0)
-    else:
-        print("Error in send_sequence 1")
-        sys.exit(0)
-    command = "80500000\n"
-    serial_port.write(command.encode())
-    incoming = serial_port.read().decode()
-    if incoming == 'r':
-        print("Sequence 2 command frequency is correct")
-    elif incoming == 'n':
-        pass
-    elif incoming == 'n':
-        print("Received n from sequence 2")
-        sys.exit(0)
-    else:
-        print("Error in send_sequence 2")
-        sys.exit(0)
-
-    command = "50.3\n"
-    serial_port.write(command.encode())
-    incoming = serial_port.read().decode()
-    if incoming == 'r':
-        print("Sequence 3 command power is correct")
-    elif incoming == 'n':
-        print("Received n from sequence 3")
-        sys.exit(0)
-    else:
-        print("Error in send_sequence 3")
-        sys.exit(0)
-
-    # Third one
-    command = "vvwv"
+    # second one
+    command = "vvwv" # Do a frequency sweep from 80 MHz to 60 MHz
     serial_port.write(command.encode())
     incoming = serial_port.read().decode()
     if incoming == 'r':
@@ -221,6 +183,44 @@ def send_sequence(serial_port):
         print("Ramp data exponential const response is undefined")
         sys.exit(0)
 
+    # third one
+    command = "fpvv" # send 80.5 MHz at 50.3%
+    serial_port.write(command.encode())
+    incoming = serial_port.read().decode()
+    if incoming == 'r':
+        print("Sequence 1 command fpv correct")
+    elif incoming == 'n':
+        print("Received n from sequence 1")
+        sys.exit(0)
+    else:
+        print("Error in send_sequence 1")
+        sys.exit(0)
+    command = "80500000\n"
+    serial_port.write(command.encode())
+    incoming = serial_port.read().decode()
+    if incoming == 'r':
+        print("Sequence 2 command frequency is correct")
+    elif incoming == 'n':
+        pass
+    elif incoming == 'n':
+        print("Received n from sequence 2")
+        sys.exit(0)
+    else:
+        print("Error in send_sequence 2")
+        sys.exit(0)
+
+    command = "50.3\n"
+    serial_port.write(command.encode())
+    incoming = serial_port.read().decode()
+    if incoming == 'r':
+        print("Sequence 3 command power is correct")
+    elif incoming == 'n':
+        print("Received n from sequence 3")
+        sys.exit(0)
+    else:
+        print("Error in send_sequence 3")
+        sys.exit(0)
+
 
 sPort = serial.Serial(portArduino,baud, timeout=7)
 if sPort.isOpen():
@@ -228,9 +228,9 @@ if sPort.isOpen():
 else:
     print("Cannot open "+portArduino)
 
-set_frequency(80000000,sPort)
-set_power(100,sPort)
-sys.exit(0)
+#set_frequency(78000000,sPort)
+#set_power(100,sPort)
+#sys.exit(0)
 send_sequence(sPort)
 sPort.close()
 sys.exit(0)

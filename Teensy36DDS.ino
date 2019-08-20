@@ -98,7 +98,7 @@ const byte oskPin = 27;
 const byte pwrContrPin = 28;
 const byte interruptPin = 2;
 
-const unsigned long SPIclockspeed = 500000;
+const unsigned long SPIclockspeed = 1000000;
 
 AD9954 DDS(ssPin, resetPin, updatePin, ps0Pin, ps1Pin, oskPin, pwrContrPin, true/*externalUpdate*/);
 IntervalTimer SWramp_timer; // The timer to produce schedules interrups that define a software ramp
@@ -195,10 +195,10 @@ void myISR();
 void setup() {
 	//GPIOD_PDDR |= (1<<3);
 	pinMode(interruptPin,INPUT);
-	pinMode(8,OUTPUT);
+	//pinMode(8,OUTPUT);
 
 
-	SWramp_timer.priority(1);
+	SWramp_timer.priority(10);
 	//attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, LOW);
 	digitalWrite(ssPin,HIGH); // This is to prepare the system for SPI communication later
 	Serial.begin(57600);
@@ -325,6 +325,8 @@ delay(100);
 
   interruptCount = 0;
   handshakeState = getHandshake();
+	handleSerial(&handshakeState);
+	handshakeState = false;
 
 /*
 	if (handshakeState) { // in this case the DDS is reset at every handshake
@@ -337,8 +339,6 @@ delay(100);
 	}
 	*/
 
-	handleSerial(&handshakeState);
-	handshakeState = false;
 
 	// Possibly reset the DDS, if necessary. The problem is that then it refreshes everything
 	/*
@@ -348,7 +348,7 @@ delay(100);
 	DDS.initialize(20000000, 20);	// REFCLK (20Mhz) and the REFCLK multiplier (4 .. 20).
 	DDS.setPower(1);
 	*/
-	delay(10);
+	delay(100);
 
 }
 
@@ -937,9 +937,12 @@ void doSequenceOutput(int numSteps) {
 					DDS.setFreq(SWrampdata_frequency[current_loop_number][0]); // the first data point
 					DDS.update();
 					SWramp_timer.begin(output_SW_Freq_ramp,software_frequency_ramps[i].time_step_ramp*1000.); // it's because it's in microseconds
-					if (current_loop_number == (numSteps - 1)) {
-						delay(software_frequency_ramps[i].time_ramp + 5); // if the ramp is the last sequence step, wait until it's done
+					delay(software_frequency_ramps[i].time_ramp + 3*software_frequency_ramps[i].time_step_ramp);
+					/*
+					while (IntervalTimerCounter < num_steps_in_ramp[current_loop_number]) {
+						delay(software_power_ramps[i].time_step_ramp*3.); // this is an arbitrary number
 					}
+					*/
 				}
 				else if (software_power_rampsIn[i]) {
 					IntervalTimerCounter = 1;
@@ -948,9 +951,18 @@ void doSequenceOutput(int numSteps) {
 					DDS.setASF(SWrampdata_power[current_loop_number][0]);
 					DDS.update();
 					SWramp_timer.begin(output_SW_Power_ramp,software_power_ramps[i].time_step_ramp*1000.);
+					delay(software_power_ramps[i].time_ramp + 3*software_power_ramps[i].time_step_ramp);
+					/*
+					while (IntervalTimerCounter < num_steps_in_ramp[current_loop_number]) {
+						delay(software_power_ramps[i].time_step_ramp*3.); // this is an arbitrary number
+					}
+					*/
+					//delay(software_frequency_ramps[i].time_ramp + 5);
+					/*
 					if (current_loop_number == (numSteps - 1)) {
 						delay(software_frequency_ramps[i].time_ramp + 5); // if the ramp is the last step, wait until it's done
 					}
+					*/
 					// so this does start the timer
 					// NOTE! First trigger comes after the first cycle of the timer, NOT immediately at the beginning
 					// And it looks like it does start the timer function too!!!
