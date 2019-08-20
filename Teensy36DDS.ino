@@ -87,6 +87,7 @@ not two at the same time
 //#include "sam.h"
 #include "math.h"
 #include <stdint.h>
+#include "communicationFunctions.h"
 
 // this is the pin numbering on the
 const byte ssPin = 10;
@@ -114,7 +115,6 @@ const float ramp_time_fraction_from_requested = 0.9; // this is to make sure tha
 // VERY IMPORTANT! Pay attention to this ramp_time_fraction_from_requested, otherwise timing bugs will result!
 
 bool handshakeState = false;
-char incomingChar;
 unsigned long timeStart;
 unsigned long timeNow;
 unsigned long timeoutms = 3000;
@@ -180,7 +180,6 @@ SW_ramp software_power_ramps[max_possible_sequence_steps]; // save the software 
 bool software_power_rampsIn[max_possible_sequence_steps];
 
 
-bool getHandshake();
 void handleSerial(bool *handshakeState);
 bool processSequence(int numSteps); // numSteps defines the number of active steps in the sequence, so the number of triggers actually
 float receiveNumericalData();
@@ -324,7 +323,7 @@ delay(100);
   */
 
   interruptCount = 0;
-  handshakeState = getHandshake();
+  handshakeState = getHandshake(&interruptTriggered,handshakeState);
 	handleSerial(&handshakeState);
 	handshakeState = false;
 
@@ -352,37 +351,16 @@ delay(100);
 
 }
 
-// getHandshake() simply establishes the first communication with Teensy
-bool getHandshake(){
-	if (Serial.available() > 0 && handshakeState == false) {
-		incomingChar = Serial.read();
-		if (incomingChar == 'h') {
-			Serial.print('y');
-			interruptTriggered = false;
-			return true;
-		}
-		else {
-			delay(20); // just to make sure that whatever needed to enter the buffer is there
-			while (Serial.read() >= 0);
-			Serial.print('n'); // only send it after the buffer has been cleared, otherwise information will be lost and there will be annoying bugs
-			return false;
-			}
-	}
-	else {
-		return false;
-	}
-}
-
-
 // This is essentially the main function of the whole program
 void handleSerial(bool *handshakeState) {
+	char incomingChar;
 	timeStart = millis(); // this is necessary to set the max time between the handshake and all information
 	while (*handshakeState) {// only enter this loop if the handshake state is correct
 		if (Serial.available() > 0) {
 			incomingChar = Serial.read();
 			switch (incomingChar) {
-
-				case 'f': // 'f' -> frequency: single tone operation
+				// 'f' means get frequency information, single tone operation
+				case 'f':
 					delay(1);
 					//Serial.println("Trying to set frequency");
 					while (Serial.available() > 0) {
@@ -421,7 +399,8 @@ void handleSerial(bool *handshakeState) {
 					}
 					*handshakeState = false; // make sure to send handshake to false after an operation
 					break;
-				case 'p': // 'p' -> power: change power in this command
+				// 'p' means get power information, single tone operation
+				case 'p':
 					delay(1);
 					while (Serial.available() > 0) {
 						incomingChar = Serial.read();
@@ -458,18 +437,28 @@ void handleSerial(bool *handshakeState) {
 					}
 					*handshakeState = false;
 					break;
-				case 'd': // Not sure if this is necessary, but this is DDS power down
+
+				// Not sure if this is necessary, but this is DDS power down
+				case 'd':
 					DDS.setPower(0);
 					*handshakeState = false;
 					Serial.print('c');
 					break;
-				case 'u': // Not sure if this is necessary but this is DDS power up
+
+				// Not sure if this is necessary but this is DDS power up
+				case 'u':
 					DDS.setPower(1);
 					*handshakeState = false;
 					Serial.print('c');
 					break;
-				case 's': // 's' stands for "sequence"
+
+				// Receive a sequence, 's' stands for "sequence"
+				case 's':
 					delay(1);
+
+					// get the number of sequence steps, return 'c' if it's been requested
+					// correctly, and then call processSequence(...) function,
+					// then process_SW_ramps(...), and doSequenceOutput(...)
 					while (Serial.available() > 0) {
 						incomingChar = Serial.read();
 							if (isDigit(incomingChar)) {
@@ -497,7 +486,6 @@ void handleSerial(bool *handshakeState) {
 								num_steps_total_sequence = 0;
 								Serial.print('n');
 								*handshakeState = false;
-								Serial.print('n');
 								break;
 							}
 						}
@@ -518,6 +506,7 @@ void handleSerial(bool *handshakeState) {
 							*handshakeState = false;
 							break;
 					}
+					// the next 4 lines are still part of case 's'
 					*handshakeState = false;
 					inStringStepsSequence = "";
 					num_steps_total_sequence = 0;
@@ -531,29 +520,33 @@ void handleSerial(bool *handshakeState) {
 			}
 		}
 
-
-
 		delay(5); // just to let it cool down a bit :)
 
+		/*
+		This last part of the function checks if the communication has
+		not timed out, and if it did, and the handshake is still hanging on true,
+		it resets to false, sends 't' on Serial (for "timeout"), clears out the serial
+		buffer, resets variables to defaults, and breaks the loop
+		*/
 		timeNow = millis();
 		if (*handshakeState == true && timeNow - timeStart > timeoutms) {
 			Serial.print('t'); //stands for "timeout"
 			while (Serial.read() >= 0);
 			*handshakeState = false;
-			// now reinitialize all variables to defaults
 		  inStringFreq = "";
 		  inStringPower = "";
-		  inStringStepsSequence = "";
 		  inStringFreqFloat = 0;
 			inStringPowerFloat = 0;
+		  inStringStepsSequence = "";
 		  num_steps_total_sequence = 0;
 			break;
 		}
-	}
-}
+	} // this is end of while(*handshakeState) loop
+} // end of handleSerial(...) function
 
 
 bool processSequence(int numSteps) {
+	char incomingChar;
 	float runningData; // This is the variable into which
 	bool errorCondition = false;
 	doSWrampsExist = false;
@@ -800,6 +793,7 @@ bool processSequence(int numSteps) {
 
 // this function receives numerical data for the contents of steps and ramps in the sequence
 float receiveNumericalData() {
+	char incomingChar;
 	String inString = "";
 	float inStringFloat = 0;
 	delay(10);
