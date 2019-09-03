@@ -126,7 +126,7 @@ const byte numBlocksSeqStep = 4; // this is how many letters there are in the
 // and comes back to the start of the loop, waiting for handshakes
 unsigned long time_now_interrupts;
 unsigned long start_time_interrupts;
-unsigned long max_time_interrupts = 10000; // let's set it for 10 s for now
+unsigned long max_time_interrupts = 20000; // let's set it for 10 s for now
 
 
 volatile bool interruptTriggered = false;
@@ -198,7 +198,7 @@ void setup() {
 
 
 	SWramp_timer.priority(10);
-	//attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, LOW);
+	//attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, RISING);
 	digitalWrite(ssPin,HIGH); // This is to prepare the system for SPI communication later
 	Serial.begin(57600);
 	//while (!Serial);
@@ -974,6 +974,7 @@ void doSequenceOutput(int numSteps) {
 
 
 void myISR() {
+	//Serial.println("Interrupt triggered");
 	DDS.update();
 	interruptCount += 1;
 	interruptTriggered = true;
