@@ -96,8 +96,7 @@ class AD9954
 
     // places DDS in linear sweep mode
     //void linearSweep(unsigned long, unsigned long, unsigned long, byte, unsigned long, byte);
-    void linearSweep(unsigned long freq0, unsigned long freq1, float posTimeMicros, float negTimeMicros, unsigned int waitingTimeMicros, byte mode, bool noDwell = false);
-
+    void linearSweep(unsigned long freq0, unsigned long freq1, float posTimeMicros, float negTimeMicros, float waitingTimeMicros, float powerPercentage, byte mode, bool noDwell = true);
 
 
 

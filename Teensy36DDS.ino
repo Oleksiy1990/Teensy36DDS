@@ -97,7 +97,7 @@ const byte ps0Pin = 25;
 const byte ps1Pin = 26;
 const byte oskPin = 27;
 const byte pwrContrPin = 28;
-const byte interruptPin = 2;
+const byte interruptPin = 9; // NOTE!!! This is NOT on DDS3 and DDS4
 
 const unsigned long SPIclockspeed = 1000000;
 
@@ -106,6 +106,8 @@ IntervalTimer SWramp_timer; // The timer to produce schedules interrups that def
 //AD9954 DDS(10, 24, 5, 25, 26, 27, 28, true);
 const unsigned long lower_freq_lim = 1000000;
 const unsigned long upper_freq_lim = 160000000;
+const float lower_HW_ramp_timelimit = 1; // shortest HW ramp time, given in microseconds
+const float higher_HW_ramp_timelimit = 1e7; // longest HW ramp time, given in microseconds
 const float lower_power_lim = 0;
 const float upper_power_lim = 100;
 const float software_ramp_time_limit = 15000; // 15000 ms = 15 s for now
@@ -165,7 +167,20 @@ typedef struct {
 	float time_step_ramp;
 } SW_ramp;
 
+// this is to hold all the data for linear ramps (hardware)
+typedef struct {
+	unsigned long freq0;
+	unsigned long freq1;
+	float posTimeMicros;
+	float negTimeMicros;
+	float waitingTimeMicros;
+	float power;
+	byte mode;
+	bool noDwell;
+} linear_ramp;
+
 bool doSWrampsExist = false;
+bool doLinearRampsExist = false;
 const unsigned int max_time_steps_SW_ramp = 1000;
 unsigned int num_time_steps_SW_ramp[max_possible_sequence_steps];
 
@@ -178,6 +193,10 @@ SW_ramp software_frequency_ramps[max_possible_sequence_steps]; // save the softw
 bool software_frequency_rampsIn[max_possible_sequence_steps];
 SW_ramp software_power_ramps[max_possible_sequence_steps]; // save the software ramps
 bool software_power_rampsIn[max_possible_sequence_steps];
+
+// This is to read in transmitted data for hardware linear frequency ramps
+linear_ramp linear_HW_frequency_ramps[max_possible_sequence_steps];
+bool linear_HW_frequency_rampsIn[max_possible_sequence_steps];
 
 
 void handleSerial(bool *handshakeState);
@@ -268,33 +287,6 @@ void loop() {
 	Serial.println(returnCode);
 	*/
 
-		//digitalWrite(triggerPin,HIGH);
-
-		//Serial.println("Inside while loop");
-		//DDS.reset();
-		/*
-		DDS.setFreq(5000000);
-		DDS.setASF(100);
-		DDS.update();
-		DDS.setFreq(1500000);
-		DDS.setASF(50);
-		DDS.update();
-		DDS.setASF(0);
-		DDS.update();
-		*/
-/*
-		delay(2000);
-		DDS.setFreq(85000000);
-		DDS.setASF(100);
-		DDS.update();
-		delay(2000);
-*/
-/*
-digitalWrite(pwrContrPin,HIGH);
-delay(1000);
-digitalWrite(pwrContrPin,LOW);
-delay(100);
-*/
 		//Serial.println("inside the while loop");
 		//digitalWrite(ssPin,HIGH);
 		//GPIOD_PDOR |= (1<<3);
@@ -303,9 +295,6 @@ delay(100);
 		//GPIOD_PDOR &= ~(1<<3);
 		//digitalWrite(ssPin,LOW);
 		//digitalWrite(8,HIGH);
-
-
-
 
   /* // This stuff checks if the update bit has been set or not
   if (REG_PORT_OUT0 & ~(1 << 20)) {
@@ -321,23 +310,13 @@ delay(100);
   digitalWrite(6,LOW);
   Serial.println("Written low");
   */
-
+	DDS.linearSweep(5000000, 7000000, 2, 2, 2, 100, 0, false);
+	/*
   interruptCount = 0;
   handshakeState = getHandshake(&interruptTriggered,handshakeState);
 	handleSerial(&handshakeState);
 	handshakeState = false;
-
-/*
-	if (handshakeState) { // in this case the DDS is reset at every handshake
-		DDS.reset();
-		DDS.initialize(400000000);	//initialize DDS
-		DDS.setChargepump(1);	//0 = 75uA, 1 = 100uA, 2 = 125uA, 3 = 150uA
-		DDS.initialize(20000000, 20);	// REFCLK (20Mhz) and the REFCLK multiplier (4 .. 20).
-		DDS.setPower(1);
-		delay(1000);
-	}
 	*/
-
 
 	// Possibly reset the DDS, if necessary. The problem is that then it refreshes everything
 	/*
@@ -655,10 +634,16 @@ bool processSequence(int numSteps) {
 			return false;
 		}
 
-	// process and save the frequency ramp
+/*
+Process and save the frequency ramp
+This can be either a software-defined ramp or a hardware-defined ramp, so
+the options are 'v', 'w', 'l' ('l' is the linear hardware ramp)
+*/
 		if (status[2] == 'v') {
 			software_frequency_ramps[i] = {2,0,0,0,0}; // this initializes it to a wrong value so that a correct value must be written before it can proceed
 			software_frequency_rampsIn[i] = false;
+			linear_HW_frequency_rampsIn[i] = false; // initialize to false at that sequence step
+			linear_HW_frequency_ramps[i] = {0,0,0,0,0,0,0,false}; // just initializing everything to 0
 		}
 		else if (status[2] == 'w') {
 			doSWrampsExist = true;
@@ -715,11 +700,120 @@ bool processSequence(int numSteps) {
 				}
 			}
 		}
+		/*
+		The data has to be sent in the form
+		1) lower freq (Hz)
+		2) upper freq (Hz)
+		3) time to go up (micros)
+		4) time to go down (micros)
+		5) time to wait at higher frequency (micros)
+		6) mode (integer)
+		7) noDwell value (integer): 0 -> false, 1 -> true
+		*/
+		else if (status[2] == 'l') {
+			doLinearRampsExist = true;
+			linear_HW_frequency_rampsIn[i] = true;
+			for (unsigned short q = 0; q < 8; q++) { // it's because there are 7 entries in the linear_HW_frequency_ramps struct
+				switch (q) {
+					case 0: // start frequency for HW ramp
+						runningData = receiveNumericalData();
+						if (runningData >= lower_freq_lim && runningData <= upper_freq_lim) {
+							linear_HW_frequency_ramps[i].freq0 = (unsigned long) runningData;
+							break;
+						}
+						else {
+							Serial.print('f');
+							return false;
+						}
+					case 1: // stop frequency for HW ramp
+						runningData = receiveNumericalData();
+						if (runningData >= lower_freq_lim && runningData <= upper_freq_lim) {
+							linear_HW_frequency_ramps[i].freq1 = (unsigned long) runningData;
+							break;
+						}
+						else {
+							Serial.print('f');
+							return false;
+						}
+					case 2: // positive edge ramp time, microseconds
+						runningData = receiveNumericalData();
+						if (runningData >= lower_HW_ramp_timelimit && runningData <= higher_HW_ramp_timelimit) {
+							linear_HW_frequency_ramps[i].posTimeMicros = runningData;
+							break;
+						}
+						else {
+							Serial.print('f');
+							return false;
+						}
+					case 3: // negative edge ramp time. microseconds
+						runningData = receiveNumericalData();
+						if (runningData >= lower_HW_ramp_timelimit && runningData <= higher_HW_ramp_timelimit) {
+							linear_HW_frequency_ramps[i].negTimeMicros = runningData;
+							break;
+						}
+						else {
+							Serial.print('f');
+							return false;
+						}
+					case 4: // waiting time between positive and negative ramp, in microseconds
+						runningData = receiveNumericalData();
+						if (runningData >= lower_HW_ramp_timelimit && runningData <= higher_HW_ramp_timelimit) {
+							linear_HW_frequency_ramps[i].waitingTimeMicros = runningData;
+							break;
+						}
+						else {
+							Serial.print('f');
+							return false;
+						}
+					case 5: // waiting time between positive and negative ramp, in microseconds
+						runningData = receiveNumericalData();
+						if (runningData >= lower_power_lim && runningData <= upper_power_lim) {
+							linear_HW_frequency_ramps[i].power = runningData;
+							break;
+						}
+						else {
+							Serial.print('f');
+							return false;
+						}
+					case 6:
+						runningData = (unsigned int) receiveNumericalData();
+						if (runningData >= 0 && runningData <= 5) { // depends on how many options there are
+							linear_HW_frequency_ramps[i].mode = runningData;
+							break;
+						}
+						else {
+							Serial.print('f');
+							return false;
+						}
+					case 7:
+						runningData = (unsigned int) receiveNumericalData();
+						if (runningData == 0) {
+							linear_HW_frequency_ramps[i].noDwell = false;
+							break;
+						}
+						else if (runningData == 1) {
+							linear_HW_frequency_ramps[i].noDwell = true;
+							break;
+						}
+						else {
+							Serial.print('f');
+							return false;
+						}
+					default:
+						Serial.print('n');
+						return false;
+				}
+			}
+		}
 		else {
 			errorCondition = true;
 		}
 
-// Process and save the power ramp
+/*
+Process and save the power ramp
+This can only be a software ramp, hardware power ramps are not supported
+So the only options are 'v' and 'w'
+*/
 		if (status[3] == 'v') {
 			software_power_ramps[i] = {2,0,0,0,0};
 			software_power_rampsIn[i] = false;
@@ -873,7 +967,10 @@ bool generateRampArrays(SW_ramp * my_sw_ramp, float * ramp_array, unsigned int *
 }
 
 
-
+/*
+The next function is to generate the numerical values of the frequencies and powers
+that will be output in software-defined ramps
+*/
 void process_SW_ramps(int numSteps){
 	//bool ramp_generated_well = true;
 	float temporary_data_arr[max_time_steps_SW_ramp];
@@ -964,6 +1061,17 @@ void doSequenceOutput(int numSteps) {
 					// The ramps work too!!! It just the timer refresh rate is not set up appropriately yet
 					// The refresh rate from the software_power_ramps structure works as well!
 				}
+				else if (linear_HW_frequency_rampsIn[i]) {
+					float totaltime = linear_HW_frequency_ramps[i].posTimeMicros+linear_HW_frequency_ramps[i].negTimeMicros+
+					linear_HW_frequency_ramps[i].waitingTimeMicros;
+
+					DDS.linearSweep(linear_HW_frequency_ramps[i].freq0,linear_HW_frequency_ramps[i].freq1,
+					linear_HW_frequency_ramps[i].posTimeMicros,linear_HW_frequency_ramps[i].negTimeMicros,
+					linear_HW_frequency_ramps[i].waitingTimeMicros,linear_HW_frequency_ramps[i].mode,
+					linear_HW_frequency_ramps[i].noDwell);
+					delay(totaltime*1000 + 1); // adding a millisecond of delay there
+				}
+
 				interruptTriggered = false;
 				break;
 			}

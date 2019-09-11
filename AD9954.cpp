@@ -24,7 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "AD9954.h"
 #include "math.h"
 
-const unsigned int PS0_BIT_SET = (1 << 21); // This is output 7 on Arduino Zero
+//const unsigned int PS0_BIT_SET = (1 << 21); // This is output 7 on Arduino Zero
 byte chargePumpvalue = 0;
 int power = 1;
 
@@ -280,36 +280,83 @@ void AD9954::setFTW(unsigned long ftw) {
 //
 //      As a general rule, round up (not down) in calculating the delta frequency steps.
 
-void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTimeMicros, float negTimeMicros, unsigned int waitingTimeMicros, byte mode, bool noDwell ) {
-	// Modes: 0 -> only sweep up and wait 1 -> only sweep down and wait
-	// 2 -> sweep up, wait, sweep down, 3 -> sweep down, wait, sweep up
+void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTimeMicros, float negTimeMicros, float waitingTimeMicros, float powerPercentage, byte mode, bool noDwell) {
+	// Modes: 0 -> only sweep up and wait
+	// 1 -> sweep up, wait, sweep down
 	//digitalWrite(_ps1,LOW); // not sure if this is needed, but OK
-	byte RampRate = 200;
+
+	/*
+	In the command the hardware only requires frequency tuning word for the bottom frequency,
+	frequency tuning word for the top frequency, the Delta frequency values for the way
+	up and down, and the number of cycles to sit at each frequency
+	*/
+
+	// We need to find the Delta frequency and the ramp rate
+	digitalWrite(_ps0,LOW);
+	digitalWrite(_ps1,LOW);
+	if (freq1 <= freq0) {
+		//Serial.println("Make sure that upper freq is above lower freq!");
+		return;
+	}
+	unsigned long frequencySpan = (freq1 - freq0);
+	byte RampRatePos = 2;
+	byte RampRateNeg = 2;
 	unsigned long sequenceDurationUpwards;
 	unsigned long sequenceDurationDownwards;
 
+	unsigned long posDF = 0;
+	unsigned long negDF = 0;
+	unsigned long numStepsPositive;
+	unsigned long numStepsNegative;
+	//Serial.println("Here in linear_ramp");
+
+/*
+	the next two while-loops are there to find the finest possible sweep
+	but still without getting Delta freq = 0, in which case it doesn't sweep
+	So I artificially set the min delta freq to 5 Hz
+*/
+	while (posDF < 3) { // Just say that the Delta freq cannot be less than 3 Hz
+		numStepsPositive = (unsigned long) posTimeMicros/(RampRatePos*10.*0.001); // 10 ns is the time step for 400 MHz clock case!
+		posDF = frequencySpan/numStepsPositive;
+		//Serial.println("We will get posDF");
+		//Serial.println(posDF);
+		if (posDF < 3) {
+			RampRatePos += 1;
+		}
+		if (RampRatePos > 253) {
+			//Serial.println("Too long ramp time, too small frequency span on way up");
+			break;
+		}
+		//Serial.println("We will get RampRatePos");
+		//Serial.println(RampRatePos);
+	}
+
+	while (negDF < 3) { // Just say that the Delta freq cannot be less than 3 Hz
+		numStepsNegative = (unsigned long) negTimeMicros/(RampRateNeg*10.*0.001); // 10 ns is the time step for 400 MHz clock case!
+		negDF = frequencySpan/numStepsNegative;
+		if (negDF < 3) {
+			RampRateNeg += 1;
+		}
+		if (RampRateNeg > 253) {
+			//Serial.println("Too long ramp time, too small frequency span on way down");
+			break;
+		}
+	}
   //REG_PORT_OUT0 |= PS0_BIT_SET; // this is to make sure that there is no output
 	//Serial.println("Start of linear ramp function, writing high");
-	digitalWrite(_updatePin,LOW);
+	//digitalWrite(_updatePin,LOW);
 
-	unsigned long frequencySpan = (freq1 - freq0);
-	unsigned long numStepsPositive = (unsigned long) posTimeMicros/(RampRate*10.*0.001); // 10 ns is the time step for 400 MHz clock case!
-	unsigned long numStepsNegative = (unsigned long) negTimeMicros/(RampRate*10.*0.001); // 10 ns is the time step for 400 MHz clock case!
-	// calculate
-
-	unsigned long posDF = frequencySpan/numStepsPositive;
-	unsigned long negDF;
 	switch (mode) {
 		case 0:
 	 		negDF = frequencySpan/2; // this is basically to immediately go back
 			break;
 		case 1:
-			negDF = frequencySpan/numStepsNegative;
 			break;
 		default:
 			break;
 	}
 
+	//Serial.println("We will get freq span, numStepsPositive,posDF");
 	//Serial.println(frequencySpan);
 	//Serial.println(numStepsPositive);
 	//Serial.println(posDF);
@@ -321,7 +368,7 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 
 
 	// construct register values
-	byte CFR1[] = { 0x02, 0x20, 0x00, 0x00}; // 0x02 sets the OSK bit, enabls the ASF functionality, 0x20 (linear sweep bit)enables the linear sweep mode.
+	byte CFR1[] = { 0x02, 0x20, 0x00, 0x00}; // 0x02 sets the OSK bit, enables the ASF functionality, 0x20 (linear sweep bit)enables the linear sweep mode.
 
 	if (noDwell) {
 		CFR1[3] = 0x04;
@@ -334,12 +381,13 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 	byte FTW1[] = {lowByte(ftw1 >> 24), lowByte(ftw1 >> 16), lowByte(ftw1 >> 8), lowByte(ftw1) };
 	byte FTW1Info[] = {0x06, 4};
 
-	byte NLSCW[] = { RampRate, lowByte(negDFW >> 24), lowByte(negDFW >> 16), lowByte(negDFW >> 8), lowByte(negDFW) };
+	byte NLSCW[] = { RampRateNeg, lowByte(negDFW >> 24), lowByte(negDFW >> 16), lowByte(negDFW >> 8), lowByte(negDFW) };
 	byte NLSCWInfo[] = {0x07, 5};
 
-	byte PLSCW[] = { RampRate, lowByte(posDFW >> 24), lowByte(posDFW >> 16), lowByte(posDFW >> 8), lowByte(posDFW) };
+	byte PLSCW[] = { RampRatePos, lowByte(posDFW >> 24), lowByte(posDFW >> 16), lowByte(posDFW >> 8), lowByte(posDFW) };
 	byte PLSCWInfo[] = {0x08, 5};
 
+	// writing information to all the registers in the device
 	AD9954::writeRegister(CFR1Info, CFR1);
 	if (debug) {
 		Serial.println("AD9954::writeRegister(CFR1 - 0x00)");
@@ -367,9 +415,10 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 
 	switch (mode) {
 		case 0:
-			AD9954::setASF(100);
+			AD9954::setASF(powerPercentage);
 			AD9954::update();
 			sequenceDurationUpwards = (posTimeMicros + waitingTimeMicros);
+			digitalWrite(_ps0,HIGH);
 			//REG_PORT_OUT0 &= ~PS0_BIT_SET;
 			//REG_PORT_OUT0 |= PS0_BIT_SET; // This procedure initiates the up-sweep
 			while (sequenceDurationUpwards > 10000) {
@@ -379,38 +428,34 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 			delayMicroseconds(sequenceDurationUpwards);
 			AD9954::setASF(0);
 			AD9954::update();
+			digitalWrite(_ps0,LOW);
 			//REG_PORT_OUT0 &= ~PS0_BIT_SET;
-			delay(10);
-			//Serial.println("PS0 written high Case 0");
-			//delay(5000);
-			//Serial.println("Done with a single up-sweep");
-			//delay(1000);
-
+			//delay(10);
 			break;
 		case 1:
-			AD9954::setASF(100);
+			AD9954::setASF(powerPercentage);
 			AD9954::update();
+			digitalWrite(_ps0,HIGH);
 			sequenceDurationUpwards = (posTimeMicros + waitingTimeMicros);
 			sequenceDurationDownwards = negTimeMicros;
-			//REG_PORT_OUT0 &= ~PS0_BIT_SET;
 			//REG_PORT_OUT0 |= PS0_BIT_SET; // This procedure initiates the up-sweep
 			while (sequenceDurationUpwards > 10000) {
 				delayMicroseconds(10000);
 				sequenceDurationUpwards -= 10000;
 			}
 			delayMicroseconds(sequenceDurationUpwards);
-
+			digitalWrite(_ps0,LOW);
 			//REG_PORT_OUT0 &= ~PS0_BIT_SET;
 			while (sequenceDurationDownwards > 10000) {
 				delayMicroseconds(10000);
 				sequenceDurationDownwards -= 10000;
 			}
 			delayMicroseconds(sequenceDurationDownwards);
-			delay(10);
-			//digitalWrite(_ps0, HIGH);
+			AD9954::setASF(0);
+			AD9954::update();
 			break;
 		default:
-			Serial.println("Inside the default case");
+			//Serial.println("Inside the default case");
 			digitalWrite(_ps0, LOW);
 			break;
     //digitalWrite(_ps0, LOW);

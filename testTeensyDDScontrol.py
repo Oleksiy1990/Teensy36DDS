@@ -4,7 +4,7 @@ import sys
 import time
 
 
-portArduino = "COM10"
+portArduino = "COM11"
 baud = 57600
 
 def do_handshake(serial_port):
@@ -228,9 +228,9 @@ if sPort.isOpen():
 else:
     print("Cannot open "+portArduino)
 
-#set_frequency(78000000,sPort)
-#set_power(100,sPort)
-#sys.exit(0)
+set_frequency(79000000,sPort)
+set_power(100,sPort)
+sys.exit(0)
 send_sequence(sPort)
 sPort.close()
 sys.exit(0)
