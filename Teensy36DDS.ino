@@ -310,13 +310,15 @@ void loop() {
   digitalWrite(6,LOW);
   Serial.println("Written low");
   */
-	DDS.linearSweep(5000000, 7000000, 2, 2, 2, 100, 0, false);
-	/*
+
+	// The DDS linear sweep directly is only for testing the linear sweeps outside of the control system
+	//DDS.linearSweep(5000000, 7000000, 2, 2, 2, 100, 0, false);
+
   interruptCount = 0;
   handshakeState = getHandshake(&interruptTriggered,handshakeState);
 	handleSerial(&handshakeState);
 	handshakeState = false;
-	*/
+
 
 	// Possibly reset the DDS, if necessary. The problem is that then it refreshes everything
 	/*
@@ -707,9 +709,12 @@ the options are 'v', 'w', 'l' ('l' is the linear hardware ramp)
 		3) time to go up (micros)
 		4) time to go down (micros)
 		5) time to wait at higher frequency (micros)
-		6) mode (integer)
-		7) noDwell value (integer): 0 -> false, 1 -> true
+		6) power (float)
+		7) mode (integer)
+		8) noDwell value (integer): 0 -> false, 1 -> true
 		*/
+
+
 		else if (status[2] == 'l') {
 			doLinearRampsExist = true;
 			linear_HW_frequency_rampsIn[i] = true;
