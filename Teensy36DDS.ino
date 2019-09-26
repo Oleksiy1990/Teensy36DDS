@@ -1042,7 +1042,7 @@ void doSequenceOutput(int numSteps) {
 					DDS.setASF(SWrampdata_power[current_loop_number][0]);
 					DDS.update();
 					SWramp_timer.begin(output_SW_Power_ramp,software_power_ramps[i].time_step_ramp*1000.);
-					delay(software_power_ramps[i].time_ramp + 3*software_power_ramps[i].time_step_ramp);
+					delay(software_power_ramps[i].time_ramp + 3*software_power_ramps[i].time_step_ramp); // adding the 3 time step ramps at the end just to wait that it really finished
 					/*
 					while (IntervalTimerCounter < num_steps_in_ramp[current_loop_number]) {
 						delay(software_power_ramps[i].time_step_ramp*3.); // this is an arbitrary number
@@ -1058,18 +1058,15 @@ void doSequenceOutput(int numSteps) {
 					// NOTE! First trigger comes after the first cycle of the timer, NOT immediately at the beginning
 					// And it looks like it does start the timer function too!!!
 
-					// The ramps work too!!! It just the timer refresh rate is not set up appropriately yet
-					// The refresh rate from the software_power_ramps structure works as well!
 				}
 				else if (linear_HW_frequency_rampsIn[i]) {
-					float totaltime = linear_HW_frequency_ramps[i].posTimeMicros+linear_HW_frequency_ramps[i].negTimeMicros+
-					linear_HW_frequency_ramps[i].waitingTimeMicros;
-
+					//float totaltime = linear_HW_frequency_ramps[i].posTimeMicros+linear_HW_frequency_ramps[i].negTimeMicros+
+					//linear_HW_frequency_ramps[i].waitingTimeMicros;
 					DDS.linearSweep(linear_HW_frequency_ramps[i].freq0,linear_HW_frequency_ramps[i].freq1,
 					linear_HW_frequency_ramps[i].posTimeMicros,linear_HW_frequency_ramps[i].negTimeMicros,
-					linear_HW_frequency_ramps[i].waitingTimeMicros,linear_HW_frequency_ramps[i].mode,
-					linear_HW_frequency_ramps[i].noDwell);
-					delay(totaltime*1000 + 1); // adding a millisecond of delay there
+					linear_HW_frequency_ramps[i].waitingTimeMicros,linear_HW_frequency_ramps[i].power,
+					linear_HW_frequency_ramps[i].mode,linear_HW_frequency_ramps[i].noDwell);
+					//delay(totaltime*1000 + 1); // the delay should already be implemented in the linearSweep function itself
 				}
 
 				interruptTriggered = false;

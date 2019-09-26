@@ -313,7 +313,7 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 /*
 	the next two while-loops are there to find the finest possible sweep
 	but still without getting Delta freq = 0, in which case it doesn't sweep
-	So I artificially set the min delta freq to 5 Hz
+	So I artificially set the min delta freq to 3 Hz
 */
 	while (posDF < 3) { // Just say that the Delta freq cannot be less than 3 Hz
 		numStepsPositive = (unsigned long) posTimeMicros/(RampRatePos*10.*0.001); // 10 ns is the time step for 400 MHz clock case!
@@ -426,9 +426,10 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 				sequenceDurationUpwards -= 10000;
 			}
 			delayMicroseconds(sequenceDurationUpwards);
-			AD9954::setASF(0);
-			AD9954::update();
+			//AD9954::setASF(0);
+			//AD9954::update();
 			digitalWrite(_ps0,LOW);
+			//delayMicroseconds(100);
 			//REG_PORT_OUT0 &= ~PS0_BIT_SET;
 			//delay(10);
 			break;
@@ -451,8 +452,9 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 				sequenceDurationDownwards -= 10000;
 			}
 			delayMicroseconds(sequenceDurationDownwards);
-			AD9954::setASF(0);
-			AD9954::update();
+			//AD9954::setASF(0);
+			//AD9954::update();
+			//delayMicroseconds(100);
 			break;
 		default:
 			//Serial.println("Inside the default case");
