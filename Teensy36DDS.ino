@@ -128,7 +128,7 @@ const byte numBlocksSeqStep = 4; // this is how many letters there are in the
 // and comes back to the start of the loop, waiting for handshakes
 unsigned long time_now_interrupts;
 unsigned long start_time_interrupts;
-unsigned long max_time_interrupts = 20000; // let's set it for 10 s for now
+unsigned long max_time_interrupts = 20000; // let's set it for 20 s for now
 
 
 volatile bool interruptTriggered = false;
@@ -287,29 +287,7 @@ void loop() {
 	Serial.println(returnCode);
 	*/
 
-		//Serial.println("inside the while loop");
-		//digitalWrite(ssPin,HIGH);
-		//GPIOD_PDOR |= (1<<3);
-		//digitalWrite(8,LOW);
-		//delay(1000);
-		//GPIOD_PDOR &= ~(1<<3);
-		//digitalWrite(ssPin,LOW);
-		//digitalWrite(8,HIGH);
 
-  /* // This stuff checks if the update bit has been set or not
-  if (REG_PORT_OUT0 & ~(1 << 20)) {
-      Serial.println("Bit is 0");
-  }
-  delay(1000);
-  digitalWrite(6,HIGH);
-  Serial.println("Written high");
-  if (REG_PORT_OUT0 & (1 << 20)) {
-      Serial.println("Bit is 1");
-  }
-  delay(1000);
-  digitalWrite(6,LOW);
-  Serial.println("Written low");
-  */
 
 	// The DDS linear sweep directly is only for testing the linear sweeps outside of the control system
 	//DDS.linearSweep(5000000, 7000000, 2, 2, 2, 100, 0, false);
@@ -462,7 +440,7 @@ void handleSerial(bool *handshakeState) {
 							if (isSequenceGood){
 								doSequenceOutput(num_steps_total_sequence);
 							}
-							else {
+							else { // this will run if isSequenceGood is false
 								inStringStepsSequence = "";
 								num_steps_total_sequence = 0;
 								Serial.print('n');
@@ -470,7 +448,7 @@ void handleSerial(bool *handshakeState) {
 								break;
 							}
 						}
-						else {
+						else { // this will run if num_steps_total_sequence is out of limits
 							while (Serial.read() >= 0);
 							inStringStepsSequence = "";
 							num_steps_total_sequence = 0;
@@ -479,7 +457,7 @@ void handleSerial(bool *handshakeState) {
 							break;
 						}
 					}
-					else {
+					else { // This will run if no data is sent over Serial to communicate sequence length
 							while (Serial.read() >= 0);
 							inStringStepsSequence = "";
 							num_steps_total_sequence = 0;
