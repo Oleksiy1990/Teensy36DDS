@@ -97,7 +97,8 @@ const byte ps0Pin = 25;
 const byte ps1Pin = 26;
 const byte oskPin = 27;
 const byte pwrContrPin = 28;
-const byte interruptPin = 9; // NOTE!!! This is NOT on DDS3 and DDS4
+//const byte interruptPin = 9; // NOTE!!! This is NOT on DDS3 and DDS4
+const byte interruptPin = 2; //  This is on DDS3 and DDS4!!!
 
 const unsigned long SPIclockspeed = 1000000;
 
