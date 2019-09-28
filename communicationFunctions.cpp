@@ -1,4 +1,3 @@
-
 #include "communicationFunctions.h"
 #include "Arduino.h"
 

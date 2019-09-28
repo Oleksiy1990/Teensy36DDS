@@ -25,6 +25,7 @@ const float software_ramp_min_timestep = 0.1; // 0.1 ms = 100 micros , given in 
 const float ramp_time_fraction_from_requested = 0.9; // this is to make sure that the ramp ends before the requested time so
 // that the next trigger does not appear before the ramp is done and the timer is stopped
 // VERY IMPORTANT! Pay attention to this ramp_time_fraction_from_requested, otherwise timing bugs will result!
+const int waitAfterHWRamp = 10; // given in microseconds
 
 // this is how many letters there are in the instruction sequence, like "fplw" or like "fvpv"
 const byte numBlocksSeqStep = 4;

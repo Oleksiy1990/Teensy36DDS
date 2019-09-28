@@ -118,17 +118,14 @@ volatile unsigned int IntervalTimerCounter = 0; // This is how many times the in
 volatile bool isTimerStarted = false; // This is to check if the timer for software ramps has started
 volatile unsigned int current_loop_number; // This is to globally have access to the loop number in the sequence
 
-String inStringFreq = ""; // this will hold the transmitted value for frequency (in Hz)
-String inStringPower = ""; // this will hold the transmitted value for power (scale 0-100)
 String inStringStepsSequence = ""; // This will hold the total number of steps in a given sequence
-float inStringFreqFloat; // this and the next two variable will hold the previous three variables, but converted to floats and an integer respectively
-float inStringPowerFloat;
 unsigned int num_steps_in_ramp[max_possible_sequence_steps]; // this will hold the number of steps in each software ramp
 
 //const float freqDefault = 80000000; // default frequency
 //const float powerDefault = 0; // default powers
 
-// these arrays hold the frequencies and powers to output
+// Note! These arrays are ONLY for sequences, and in particular, for single value output in sequences
+// these arrays hold the frequencies and powers from the point of computer communication in order to then output them to the DDS
 // the booleans hold whether at that particular step output is active or not
 float sequenceFreqs[max_possible_sequence_steps];
 float sequencePowers[max_possible_sequence_steps];
@@ -148,8 +145,8 @@ typedef struct {
 
 // this is to hold all the data for linear ramps (hardware)
 typedef struct {
-	unsigned long freq0;
-	unsigned long freq1;
+	float freq0;
+	float freq1;
 	float posTimeMicros;
 	float negTimeMicros;
 	float waitingTimeMicros;
@@ -366,7 +363,7 @@ void handleSerial(bool *handshakeState) {
 							else { // this will run if isSequenceGood is false
 								inStringStepsSequence = "";
 								num_steps_total_sequence = 0;
-								Serial.print('n');
+								//Serial.print('n');
 								*handshakeState = false;
 								break;
 							}
@@ -415,10 +412,6 @@ void handleSerial(bool *handshakeState) {
 			Serial.print('t'); //stands for "timeout"
 			while (Serial.read() >= 0);
 			*handshakeState = false;
-		  inStringFreq = "";
-		  inStringPower = "";
-		  inStringFreqFloat = 0;
-			inStringPowerFloat = 0;
 		  inStringStepsSequence = "";
 		  num_steps_total_sequence = 0;
 			break;
@@ -427,23 +420,24 @@ void handleSerial(bool *handshakeState) {
 } // end of handleSerial(...) function
 
 
-bool processSequence(int numSteps) {
+// first, after a correct 4-character command, send an 'r' if everyhing is good, 'n' if it's bad
+bool processSequence(int numSteps) { // numSteps defines how many steps the sequence has
 	char incomingChar;
 	float runningData; // This is the variable into which
 	bool errorCondition = false;
 	doSWrampsExist = false;
-	char status[numBlocksSeqStep]; // this is basically what type of commands are in each step (void, simple step, ramp)
+	char status[numBlocksSeqStep]; // command are in each step (void, simple step, ramp, hardware ramp)
 	delay(100); // Apparently this waiting time is really important
 
 	for (byte i = 0; i < numSteps; ++i) { // num steps is in the total sequence, so the number of triggers
 		delay(10);
 		// first we receive the commands, of the form 'fplw', and respond with 'r' if all good
-		for (byte j = 0; j < numBlocksSeqStep; ++j ) {
+		for (byte j = 0; j < numBlocksSeqStep; ++j ) { // this is to get the "status" command at every step of numSteps
 			if (Serial.available() > 0) { // it must be exactly the expected number of characters
 				incomingChar = Serial.read();
 			}
 			else {
-				incomingChar = 'q';
+				incomingChar = 'q'; // meaning a wrong one, not the correct number of status commands was send, so it's an error
 			}
 			if (incomingChar == 'f' || incomingChar == 'p' || incomingChar == 'l' || incomingChar == 'w' || incomingChar == 'v') {
 				status[j] = incomingChar;
@@ -463,10 +457,11 @@ bool processSequence(int numSteps) {
 			Serial.print('r'); // stands for "received"
 		}
 
-		// Now we start filling the saved data buffers with the results of the commands
-		// Do not send "vvvv"
+		// Note! Command "vvvv" is impossible
 
 		// NOTE!!! This is only good for 4 character status messages
+
+		// Let's do some checks on status characters so that the system doesn't get confused afterwards
 		if (status[0] != 'v' && status[2] != 'v'){ // meaning, one cannot update a single freq and send a ramp at the same time
 			errorCondition = true;
 		}
@@ -482,16 +477,24 @@ bool processSequence(int numSteps) {
 		}
 
 
-		if (status[0] == 'v' && status[2] == 'v' && i == 0) { // that is, either single freq or freq ramp must not be void
+		if (status[0] == 'v' && status[2] == 'v' && i == 0) { // that is, either single freq or freq ramp must not be void in the first step
 			errorCondition = true;
 		}
-		if (status[1] == 'v' && status[3] == 'v' && i == 0) { // either single power or power ramp must not be void
+		if (status[1] == 'v' && status[3] == 'v' && i == 0) { // either single power or power ramp must not be void in the first step
 			errorCondition = true;
 		}
 		if (errorCondition) {
 			Serial.print('n');
 			return false;
 		}
+		// Done with status checks now
+
+ 		/*
+		Format note:
+		[0] can only have either 'f' or 'v', so it's either a frequency update, or void
+		[1] can only have either 'p' or 'v' so it's either a power update, or void
+		[2] can have either 'w' or 'l' or 'v', so either software ramp or a linear hardware ramp or void
+		*/
 
 		if (status[0] == 'v') {
 			sequenceFreqs[i] = 0;
@@ -521,13 +524,13 @@ bool processSequence(int numSteps) {
 			runningData = receiveNumericalData();
 			if (runningData >= lower_power_lim && runningData <= upper_power_lim){
 				sequencePowers[i] = runningData;
+				sequencePowersIn[i] = true;
 			}
 			else {
 				runningData = 0;
 				Serial.print('p');
 				return false;
 			}
-			sequencePowersIn[i] = true;
 		}
 		else {
 			errorCondition = true;
@@ -586,7 +589,7 @@ the options are 'v', 'w', 'l' ('l' is the linear hardware ramp)
 					case 3: // time duration of ramp
 						runningData = receiveNumericalData();
 						if (runningData > 0 && runningData <= software_ramp_time_limit) {
-							software_frequency_ramps[i].time_ramp = runningData*ramp_time_fraction_from_requested;
+							software_frequency_ramps[i].time_ramp = runningData*ramp_time_fraction_from_requested; // Remember that the time is some fraction of what's written!
 							break;
 						}
 						else {
@@ -624,7 +627,7 @@ the options are 'v', 'w', 'l' ('l' is the linear hardware ramp)
 					case 0: // start frequency for HW ramp
 						runningData = receiveNumericalData();
 						if (runningData >= lower_freq_lim && runningData <= upper_freq_lim) {
-							linear_HW_frequency_ramps[i].freq0 = (unsigned long) runningData;
+							linear_HW_frequency_ramps[i].freq0 = runningData;
 							break;
 						}
 						else {
@@ -634,7 +637,7 @@ the options are 'v', 'w', 'l' ('l' is the linear hardware ramp)
 					case 1: // stop frequency for HW ramp
 						runningData = receiveNumericalData();
 						if (runningData >= lower_freq_lim && runningData <= upper_freq_lim) {
-							linear_HW_frequency_ramps[i].freq1 = (unsigned long) runningData;
+							linear_HW_frequency_ramps[i].freq1 = runningData;
 							break;
 						}
 						else {
@@ -935,6 +938,7 @@ void doSequenceOutput(int numSteps) {
 					linear_HW_frequency_ramps[i].posTimeMicros,linear_HW_frequency_ramps[i].negTimeMicros,
 					linear_HW_frequency_ramps[i].waitingTimeMicros,linear_HW_frequency_ramps[i].power,
 					linear_HW_frequency_ramps[i].mode,linear_HW_frequency_ramps[i].noDwell);
+					delayMicroseconds(waitAfterHWRamp); // wait for this time after delays for the ramp itself in linearSweep function
 					//delay(totaltime*1000 + 1); // the delay should already be implemented in the linearSweep function itself
 				}
 

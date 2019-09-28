@@ -280,7 +280,7 @@ void AD9954::setFTW(unsigned long ftw) {
 //
 //      As a general rule, round up (not down) in calculating the delta frequency steps.
 
-void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTimeMicros, float negTimeMicros, float waitingTimeMicros, float powerPercentage, byte mode, bool noDwell) {
+void AD9954::linearSweep(float freq0, float freq1, float posTimeMicros, float negTimeMicros, float waitingTimeMicros, float powerPercentage, byte mode, bool noDwell) {
 	// Modes: 0 -> only sweep up and wait
 	// 1 -> sweep up, wait, sweep down
 	//digitalWrite(_ps1,LOW); // not sure if this is needed, but OK
@@ -291,18 +291,20 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 	up and down, and the number of cycles to sit at each frequency
 	*/
 
-	// We need to find the Delta frequency and the ramp rate
+	// At the beginning these two pins have to be set low
 	digitalWrite(_ps0,LOW);
 	digitalWrite(_ps1,LOW);
+
+
 	if (freq1 <= freq0) {
 		//Serial.println("Make sure that upper freq is above lower freq!");
 		return;
 	}
-	unsigned long frequencySpan = (freq1 - freq0);
+	float frequencySpan = (freq1 - freq0);
 	byte RampRatePos = 2;
 	byte RampRateNeg = 2;
-	unsigned long sequenceDurationUpwards;
-	unsigned long sequenceDurationDownwards;
+	long sequenceDurationUpwards;
+	long sequenceDurationDownwards;
 
 	unsigned long posDF = 0;
 	unsigned long negDF = 0;
@@ -361,10 +363,10 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 	//Serial.println(numStepsPositive);
 	//Serial.println(posDF);
 
-	unsigned long ftw0 = freq0 * RESOLUTION / _refClk;
-	unsigned long ftw1 = freq1 * RESOLUTION / _refClk;
-	unsigned long posDFW = posDF * RESOLUTION / _refClk;
-	unsigned long negDFW = negDF * RESOLUTION / _refClk;
+	unsigned long ftw0 = (unsigned long) freq0 * RESOLUTION / _refClk;
+	unsigned long ftw1 = (unsigned long) freq1 * RESOLUTION / _refClk;
+	unsigned long posDFW = (unsigned long) posDF * RESOLUTION / _refClk;
+	unsigned long negDFW = (unsigned long) negDF * RESOLUTION / _refClk;
 
 
 	// construct register values
@@ -421,6 +423,7 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 			digitalWrite(_ps0,HIGH);
 			//REG_PORT_OUT0 &= ~PS0_BIT_SET;
 			//REG_PORT_OUT0 |= PS0_BIT_SET; // This procedure initiates the up-sweep
+
 			while (sequenceDurationUpwards > 10000) {
 				delayMicroseconds(10000);
 				sequenceDurationUpwards -= 10000;
@@ -428,7 +431,7 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 			delayMicroseconds(sequenceDurationUpwards);
 			//AD9954::setASF(0);
 			//AD9954::update();
-			digitalWrite(_ps0,LOW);
+			//digitalWrite(_ps0,LOW);
 			//delayMicroseconds(100);
 			//REG_PORT_OUT0 &= ~PS0_BIT_SET;
 			//delay(10);
@@ -461,8 +464,7 @@ void AD9954::linearSweep(unsigned long freq0, unsigned long freq1, float posTime
 			digitalWrite(_ps0, LOW);
 			break;
     //digitalWrite(_ps0, LOW);
-}
-
+	}
 }
 
 
