@@ -1,0 +1,62 @@
+Old commented out code from 
+
+
+
+/*
+void fake_timer_function() {
+	if (IntervalTimerCounter%2 > 0.5) {
+		digitalWrite(8,HIGH);
+	}
+	else {
+		digitalWrite(8,LOW);
+	}
+	IntervalTimerCounter++;
+	if (IntervalTimerCounter>50) {
+		SWramp_timer.end();
+	}
+
+}
+
+void fake_timer_function2() {
+	digitalWrite(8,LOW);
+}
+*/
+
+
+/*
+void SysTick_Handler(void) {
+
+}
+*/
+
+// Some debug code in case it's needed
+					/*
+					if (isTimerStarted) {
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+					}
+					if (!isTimerStarted){
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+						digitalWrite(8,HIGH);
+						delay(500);
+						digitalWrite(8,LOW);
+						delay(500);
+					}
+					*/

@@ -1,3 +1,5 @@
+// test
+
 /*
 AD9954 Example Code
 By:
@@ -88,50 +90,28 @@ not two at the same time
 #include "math.h"
 #include <stdint.h>
 #include "communicationFunctions.h"
+#include "constants.h" // const definitions for Teensy pins and sequence parameters are there
 
-// this is the pin numbering on the
-const byte ssPin = 10;
-const byte resetPin = 24;
-const byte updatePin = 5;
-const byte ps0Pin = 25;
-const byte ps1Pin = 26;
-const byte oskPin = 27;
-const byte pwrContrPin = 28;
-//const byte interruptPin = 9; // NOTE!!! This is NOT on DDS3 and DDS4
-const byte interruptPin = 2; //  This is on DDS3 and DDS4!!!
 
-const unsigned long SPIclockspeed = 1000000;
-
+// initialize the DDS here
 AD9954 DDS(ssPin, resetPin, updatePin, ps0Pin, ps1Pin, oskPin, pwrContrPin, true/*externalUpdate*/);
 IntervalTimer SWramp_timer; // The timer to produce schedules interrups that define a software ramp
 //AD9954 DDS(10, 24, 5, 25, 26, 27, 28, true);
-const unsigned long lower_freq_lim = 1000000;
-const unsigned long upper_freq_lim = 160000000;
-const float lower_HW_ramp_timelimit = 1; // shortest HW ramp time, given in microseconds
-const float higher_HW_ramp_timelimit = 1e7; // longest HW ramp time, given in microseconds
-const float lower_power_lim = 0;
-const float upper_power_lim = 100;
-const float software_ramp_time_limit = 15000; // 15000 ms = 15 s for now
-const float software_ramp_min_timestep = 0.1; // 0.1 ms = 200 micros , given in ms
-const float ramp_time_fraction_from_requested = 0.9; // this is to make sure that the ramp ends before the requested time so
-// that the next trigger does not appear before the ramp is done and the timer is stopped
-// VERY IMPORTANT! Pay attention to this ramp_time_fraction_from_requested, otherwise timing bugs will result!
 
+// these variables are used over and over again during the sequence
 bool handshakeState = false;
 unsigned long timeStart;
 unsigned long timeNow;
 unsigned long timeoutms = 3000;
 bool isSequenceGood;
-const byte numBlocksSeqStep = 4; // this is how many letters there are in the
-// instruction sequence, like "fplw" or like "fvpv"
 
 // This is only to make sure that if there are no interrups coming, at some point it stops waiting for them
 // and comes back to the start of the loop, waiting for handshakes
 unsigned long time_now_interrupts;
 unsigned long start_time_interrupts;
-unsigned long max_time_interrupts = 20000; // let's set it for 20 s for now
+unsigned long max_time_interrupts = 20000; // given in ms, let's set it for 20 s for now
 
-
+// Volatile variables: they can be changed inside interrupt routines
 volatile bool interruptTriggered = false;
 volatile unsigned int interruptCount = 0; // this counts the number of interrupts in any particular sequence
 volatile unsigned int IntervalTimerCounter = 0; // This is how many times the interval timer sent a tick
@@ -143,8 +123,6 @@ String inStringPower = ""; // this will hold the transmitted value for power (sc
 String inStringStepsSequence = ""; // This will hold the total number of steps in a given sequence
 float inStringFreqFloat; // this and the next two variable will hold the previous three variables, but converted to floats and an integer respectively
 float inStringPowerFloat;
-int num_steps_total_sequence; // how many steps the total sequence will last (this must be the number of triggers)
-const int max_possible_sequence_steps = 20; // the max possible steps for any sequence, this will be the max memory chunk for data
 unsigned int num_steps_in_ramp[max_possible_sequence_steps]; // this will hold the number of steps in each software ramp
 
 //const float freqDefault = 80000000; // default frequency
@@ -202,7 +180,6 @@ bool linear_HW_frequency_rampsIn[max_possible_sequence_steps];
 
 void handleSerial(bool *handshakeState);
 bool processSequence(int numSteps); // numSteps defines the number of active steps in the sequence, so the number of triggers actually
-float receiveNumericalData();
 void doSequenceOutput(int numSteps);
 bool generateRampArrays(SW_ramp * my_sw_ramp, float * ramp_array, unsigned int * num_steps_this_ramp);
 void process_SW_ramps(int numSteps);
@@ -215,7 +192,6 @@ void setup() {
 	//GPIOD_PDDR |= (1<<3);
 	pinMode(interruptPin,INPUT);
 	//pinMode(8,OUTPUT);
-
 
 	SWramp_timer.priority(10);
 	//attachInterrupt(digitalPinToInterrupt(interruptPin), myISR, RISING);
@@ -314,6 +290,8 @@ void loop() {
 // This is essentially the main function of the whole program
 void handleSerial(bool *handshakeState) {
 	char incomingChar;
+	bool successfulDataPoint = false;
+	float singleDataPoint = 0;
 	timeStart = millis(); // this is necessary to set the max time between the handshake and all information
 	while (*handshakeState) {// only enter this loop if the handshake state is correct
 		if (Serial.available() > 0) {
@@ -322,80 +300,24 @@ void handleSerial(bool *handshakeState) {
 				// 'f' means get frequency information, single tone operation
 				case 'f':
 					delay(1);
-					//Serial.println("Trying to set frequency");
-					while (Serial.available() > 0) {
-						incomingChar = Serial.read(); // it returns -1 if nothing is available
-							if (isDigit(incomingChar) || incomingChar == '.') {
-								inStringFreq += incomingChar;
-							}
-							else { // meaning that wrong characters are being sent
-								while (Serial.read() >= 0);
-								inStringFreq = "";
-								inStringFreqFloat = 0;
-								Serial.print('n');
-								*handshakeState = false;
-								break;
-							}
+					successfulDataPoint = getOneDatapoint(&singleDataPoint,lower_freq_lim,upper_freq_lim);
+					if (successfulDataPoint) {
+						DDS.setFreq(singleDataPoint);
+						DDS.update();
 					}
-					if (inStringFreq.length() > 0) {
-						inStringFreqFloat = inStringFreq.toFloat();
-						if (inStringFreqFloat >= lower_freq_lim && inStringFreqFloat <= upper_freq_lim) {
-
-							DDS.setFreq(inStringFreqFloat);
-							DDS.update();
-							Serial.print('c'); // 'c' stands for "correct"
-						}
-						else { // meaning that the requested frequency is out of range
-							Serial.print('f');
-						}
-						inStringFreq = "";
-						inStringFreqFloat = 0;
-					}
-					else { // if there was nothing send after 'f'
-						while (Serial.read() >= 0);
-						Serial.print('n');
-						inStringFreq = "";
-						inStringFreqFloat = 0;
-					}
-					*handshakeState = false; // make sure to send handshake to false after an operation
+					successfulDataPoint = false;
+					*handshakeState = false; // set handshake to false after an operation, otherwise it will hang
 					break;
 				// 'p' means get power information, single tone operation
 				case 'p':
 					delay(1);
-					while (Serial.available() > 0) {
-						incomingChar = Serial.read();
-							if (isDigit(incomingChar) || incomingChar == '.') {
-								inStringPower += incomingChar;
-							}
-							else {
-								while (Serial.read() >= 0);
-								inStringPower = "";
-								inStringPowerFloat = 0;
-								Serial.print('n');
-								*handshakeState = false;
-								break;
-							}
+					successfulDataPoint = getOneDatapoint(&singleDataPoint,lower_power_lim,upper_power_lim);
+					if (successfulDataPoint) {
+						DDS.setASF(singleDataPoint);
+						DDS.update();
 					}
-					if (inStringPower.length() > 0) {
-						inStringPowerFloat = inStringPower.toFloat();
-						if (inStringPowerFloat >= lower_power_lim && inStringPowerFloat <= upper_power_lim) {
-							DDS.setASF(inStringPowerFloat);
-							DDS.update();
-							Serial.print('c');
-						}
-						else { // meaning that power is out of range
-							Serial.print('p');
-						}
-						inStringPower = "";
-						inStringPowerFloat = 0;
-					}
-					else { // if there was nothing sent after 'p'
-						while (Serial.read() >= 0);
-						Serial.print('n');
-						inStringPower = "";
-						inStringPowerFloat = 0;
-					}
-					*handshakeState = false;
+					successfulDataPoint = false;
+					*handshakeState = false; // set handshake to false after an operation, otherwise it will hang
 					break;
 
 				// Not sure if this is necessary, but this is DDS power down
@@ -869,43 +791,6 @@ So the only options are 'v' and 'w'
 	return true;
 }
 
-// this function receives numerical data for the contents of steps and ramps in the sequence
-float receiveNumericalData() {
-	char incomingChar;
-	String inString = "";
-	float inStringFloat = 0;
-	delay(10);
-
-	while (Serial.available() > 0) {
-	incomingChar = Serial.read();
-		if (isDigit(incomingChar) || incomingChar == '.') {
-			inString += incomingChar;
-		}
-		else if (isSpace(incomingChar)) { // this must be the newline character that is sent
-			break;
-		}
-		else {
-			delay(10);
-			while (Serial.read() >= 0);
-			inString = "";
-			inStringFloat = 0;
-			break;
-		}
-	}
-	if (inString.length() > 0) {
-		inStringFloat = inString.toFloat();
-		Serial.print('r');
-		return inStringFloat;
-	}
-	else {
-		while (Serial.read() >= 0);
-		Serial.print('n');
-		return -1;
-	}
-
-}
-
-
 // this function generates the actual data arrays that produce software ramps.
 // in other words, it evaluates the particular linear or exponential function that is given
 // called from process_SW_ramps
@@ -1090,61 +975,3 @@ void output_SW_Power_ramp() {
 		SWramp_timer.end();
 	}
 }
-/*
-void fake_timer_function() {
-	if (IntervalTimerCounter%2 > 0.5) {
-		digitalWrite(8,HIGH);
-	}
-	else {
-		digitalWrite(8,LOW);
-	}
-	IntervalTimerCounter++;
-	if (IntervalTimerCounter>50) {
-		SWramp_timer.end();
-	}
-
-}
-
-void fake_timer_function2() {
-	digitalWrite(8,LOW);
-}
-*/
-
-
-/*
-void SysTick_Handler(void) {
-
-}
-*/
-
-// Some debug code in case it's needed
-					/*
-					if (isTimerStarted) {
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-					}
-					if (!isTimerStarted){
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-						digitalWrite(8,HIGH);
-						delay(500);
-						digitalWrite(8,LOW);
-						delay(500);
-					}
-					*/
