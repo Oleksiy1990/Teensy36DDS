@@ -947,12 +947,13 @@ void doSequenceOutput(int numSteps) {
 			}
 		}
 	}
-	detachInterrupt(digitalPinToInterrupt(interruptPin));
+	//detachInterrupt(digitalPinToInterrupt(interruptPin)); // NOT SURE IF THIS WORKS!!!
 }
 
 
 void myISR() {
 	//Serial.println("Interrupt triggered");
+	digitalWrite(ps0Pin,LOW); // NOT SURE IF THIS IS GOOD!!! Check it
 	DDS.update();
 	interruptCount += 1;
 	interruptTriggered = true;
